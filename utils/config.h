@@ -8,7 +8,7 @@
 #include "rapidjson/document.h"
 
 
-namespace paxos {
+namespace glog {
 
 
 class Config {

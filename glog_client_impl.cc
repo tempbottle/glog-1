@@ -1,14 +1,62 @@
-
+#include <chrono>
 #include "glog_client_impl.h"
 #include "utils.h"
 #include "glog.pb.h"
 #include "paxos.pb.h"
+#include "cqueue.h"
 
 
 using grpc::ClientContext;
 using grpc::Status;
 
+
+namespace {
+
+const int DEFAULT_TIMEOUT = 100;
+
+void set_deadline(grpc::ClientContext& context, int milliseconds)
+{
+    context.set_deadline(
+            std::chrono::system_clock::now() + 
+            std::chrono::milliseconds{milliseconds});
+}
+
+void ClientCallPostMsg(
+        const std::map<uint64_t, std::string>& groups, const paxos::Message& msg)
+{
+    assert(0 < msg.to_id());
+    assert(0 < msg.peer_id());
+    static __thread 
+        std::map<uint64_t, std::unique_ptr<glog::GlogClientImpl>>* cache;
+    if (nullptr == cache) {
+        cache = new std::map<uint64_t, std::unique_ptr<glog::GlogClientImpl>>{};
+    }
+
+    assert(nullptr != cache);
+
+    auto& client_cache = *cache;
+
+    auto svrid = msg.to_id();
+    if (client_cache.end() == client_cache.find(svrid)) {
+        client_cache.emplace(svrid, std::unique_ptr<glog::GlogClientImpl>{
+                new glog::GlogClientImpl{svrid, grpc::CreateChannel(
+                        groups.at(svrid), grpc::InsecureCredentials())}});
+    }
+
+    auto& client = client_cache.at(svrid);
+    assert(nullptr != client);
+
+    client->PostMsg(msg);
+    logdebug("PostMsg svrid %" PRIu64 
+            " msg type %d", svrid, static_cast<int>(msg.type()));
+    return ;
+}
+
+
+}
+
 namespace glog {
+
 
 GlogClientImpl::GlogClientImpl(
         const uint64_t svrid, 
@@ -17,6 +65,7 @@ GlogClientImpl::GlogClientImpl(
     , stub_(glog::Glog::NewStub(channel))
 {
     assert(0 < svrid_);
+    assert(nullptr != channel);
 }
 
 GlogClientImpl::~GlogClientImpl() = default;
@@ -26,6 +75,7 @@ void GlogClientImpl::PostMsg(const paxos::Message& msg)
     NoopMsg reply;
 
     ClientContext context;
+    set_deadline(context, DEFAULT_TIMEOUT);
     hassert(msg.to_id() == svrid_, "msg.peer_id %" PRIu64 
             " svrid_ %" PRIu64 "", msg.peer_id(), svrid_);
     Status status = stub_->PostMsg(&context, msg, &reply);
@@ -46,7 +96,9 @@ int GlogClientImpl::Propose(gsl::cstring_view<> data)
     ProposeResponse reply;
 
     ClientContext context;
+    set_deadline(context, DEFAULT_TIMEOUT);
     Status status = stub_->Propose(&context, request, &reply);
+    printf ( "ret from Propose\n" );
     if (status.ok()) {
         return reply.retcode();
     }
@@ -63,6 +115,8 @@ std::tuple<int, uint64_t, uint64_t> GlogClientImpl::GetPaxosInfo()
     PaxosInfo reply;
 
     ClientContext context;
+    set_deadline(context, DEFAULT_TIMEOUT);
+
     Status status = stub_->GetPaxosInfo(&context, request, &reply);
     if (status.ok()) {
         return std::make_tuple(0, reply.max_index(), reply.commited_index());
@@ -81,6 +135,8 @@ void GlogClientImpl::TryCatchUp()
     NoopMsg reply;
 
     ClientContext context;
+    set_deadline(context, DEFAULT_TIMEOUT);
+
     Status status = stub_->TryCatchUp(&context, request, &reply);
     if (status.ok()) {
         return ;
@@ -100,6 +156,8 @@ void GlogClientImpl::TryPropose(uint64_t index)
     NoopMsg reply;
 
     ClientContext context;
+    set_deadline(context, DEFAULT_TIMEOUT);
+
     Status status = stub_->TryPropose(&context, request, &reply);
     if (status.ok()) {
         return ;
@@ -120,6 +178,8 @@ std::tuple<std::string, std::string> GlogClientImpl::GetGlog(uint64_t index)
     GetGlogResponse reply;
 
     ClientContext context; 
+    set_deadline(context, DEFAULT_TIMEOUT);
+
     Status status = stub_->GetGlog(&context, request, &reply);
     if (status.ok()) {
         return std::make_tuple(reply.info(), reply.data());
@@ -176,6 +236,40 @@ void GlogAsyncClientImpl::PostMsg(const paxos::Message& msg)
     return ;
 }
 
+
+int ClientPostMsgWorker(
+        uint64_t selfid, 
+        const std::map<uint64_t, std::string>& groups, 
+        CQueue<std::unique_ptr<paxos::Message>>& msg_queue)
+{
+    // TODO: bStop ?
+    while (true) {
+        std::unique_ptr<paxos::Message> msg = msg_queue.Pop();
+
+        // deal with the msg;
+        assert(nullptr != msg);
+        assert(selfid == msg->peer_id());
+        assert(0 < msg->index());
+
+        logdebug("TEST index %" PRIu64 " msgtype %d to_id %" PRIu64 " peer_id %" PRIu64 " ", 
+                msg->index(), static_cast<int>(msg->type()),
+                msg->to_id(), msg->peer_id());
+
+        if (0 != msg->to_id()) {
+            ClientCallPostMsg(groups, *msg);
+        } else {
+            // broadcast
+            for (auto& piter : groups) {
+                if (selfid == piter.first) {
+                    continue;
+                }
+
+                msg->set_to_id(piter.first);
+                ClientCallPostMsg(groups, *msg);
+            }
+        }
+    }
+}
 
 } // namespace glog
 

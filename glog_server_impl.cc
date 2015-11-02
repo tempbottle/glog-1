@@ -101,8 +101,17 @@ GlogServiceImpl::Propose(
                 request->data().size(), peer.c_str());
     }
     
-    uint64_t index = paxos_log_->Propose(
+    int ret = 0;
+    uint64_t index = 0;
+    tie(ret, index) = paxos_log_->Propose(
             {request->data().data(), request->data().size()}, callback_);
+    reply->set_retcode(ret);
+    if (0 != ret) {
+        logerr("Propose ret %d", ret);
+        return grpc::Status(
+                static_cast<grpc::StatusCode>(ret), "Propose failed");
+    }
+
     hassert(0 < index, "index %" PRIu64 "\n", index); 
     paxos_log_->Wait(index);
 

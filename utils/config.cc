@@ -10,7 +10,7 @@ using rapidjson::Document;
 using rapidjson::FileReadStream;
 using rapidjson::Value;
 
-namespace paxos {
+namespace glog {
 
 
 Config::Config(const gsl::cstring_view<>& sConfigFileName)

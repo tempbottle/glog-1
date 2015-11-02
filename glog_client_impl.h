@@ -1,5 +1,7 @@
 #pragma once
 
+#include <stdint.h>
+#include <map>
 #include <tuple>
 #include <memory>
 #include <grpc++/grpc++.h>
@@ -9,6 +11,10 @@
 namespace paxos {
     class Message;
 } // namespace paxos
+
+
+template <typename EntryType>
+class CQueue;
 
 
 namespace glog {
@@ -72,6 +78,11 @@ private:
             NoopMsg>> rsp_map_;
 };
 
+
+int ClientPostMsgWorker(
+        uint64_t selfid, 
+        const std::map<uint64_t, std::string>& groups, 
+        CQueue<std::unique_ptr<paxos::Message>>& msg_queue);
 
 } // namespace glog
 
