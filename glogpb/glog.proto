@@ -33,6 +33,10 @@ message PaxosInfo {
     uint64 commited_index = 2;
 };
 
+message TryProposeRequest {
+    uint64 index = 1;
+};
+
 service Glog {
 
     rpc PostMsg (paxos.Message) returns (NoopMsg) {}
@@ -43,6 +47,8 @@ service Glog {
     rpc GetPaxosInfo (NoopMsg) returns (PaxosInfo) {}
 
     rpc TryCatchUp (NoopMsg) returns (NoopMsg) {}
+
+    rpc TryPropose (TryProposeRequest) returns (NoopMsg) {}
 
     // ADD FOR TEST
     rpc GetGlog (GetGlogRequest) returns (GetGlogResponse) {}

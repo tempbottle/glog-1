@@ -51,6 +51,11 @@ public:
             const glog::NoopMsg* request, 
             glog::NoopMsg* reply) override;
 
+    grpc::Status TryPropose(
+            grpc::ServerContext* context, 
+            const glog::TryProposeRequest* request, 
+            glog::NoopMsg* reply) override;
+
     // test
     grpc::Status GetGlog(
             grpc::ServerContext* context, 

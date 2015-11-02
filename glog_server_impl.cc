@@ -74,7 +74,7 @@ GlogServiceImpl::PostMsg(
             request->index(), static_cast<uint32_t>(request->type()), 
             request->peer_id(), request->to_id());
     const paxos::Message& msg = *request;
-    int ret = paxos_log_->Step(request->index(), msg, callback_);
+    int ret = paxos_log_->Step(msg, callback_);
     if (0 != ret) {
         logerr("paxos_log.Step selfid %" PRIu64 " index %" PRIu64 " failed ret %d", 
                 paxos_log_->GetSelfId(), request->index(), ret);
@@ -100,19 +100,13 @@ GlogServiceImpl::Propose(
         logdebug("Propose datasize %" PRIu64 " peer %s", 
                 request->data().size(), peer.c_str());
     }
-    int retcode = 0;
-    uint64_t index = 0;
-    tie(retcode, index) = paxos_log_->Propose(
+    
+    uint64_t index = paxos_log_->Propose(
             {request->data().data(), request->data().size()}, callback_);
-    reply->set_retcode(retcode);
-    if (0 != retcode) {
-        logerr("Propose retcode %d", retcode);
-        return grpc::Status(
-                static_cast<grpc::StatusCode>(retcode), "propose failed");
-    }
-
     hassert(0 < index, "index %" PRIu64 "\n", index); 
     paxos_log_->Wait(index);
+
+    // TODO: check the chosen value ?
     return grpc::Status::OK;
 }
 
@@ -185,6 +179,31 @@ GlogServiceImpl::TryCatchUp(
     logdebug("most_recent %d seldid %" PRIu64 
             " commited_index %" PRIu64 " peer_commited_index %" PRIu64, 
             most_recent, selfid, commited_index, peer_commited_index);
+    return grpc::Status::OK;
+}
+
+grpc::Status
+GlogServiceImpl::TryPropose(
+        grpc::ServerContext* context, 
+        const glog::TryProposeRequest* request, 
+        glog::NoopMsg* reply)
+{
+    assert(nullptr != context);
+    assert(nullptr != request);
+    assert(nullptr != reply);
+
+    {
+        string peer = context->peer();
+        logdebug(" peer %s", peer.c_str());
+    }
+
+    int retcode = paxos_log_->TryPropose(request->index(), callback_);
+    if (0 != retcode) {
+        logerr("TryPropose retcode %d", retcode);
+        return grpc::Status(
+                static_cast<grpc::StatusCode>(retcode), "redo propose failed");
+    }
+
     return grpc::Status::OK;
 }
 

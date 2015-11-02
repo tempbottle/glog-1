@@ -92,6 +92,25 @@ void GlogClientImpl::TryCatchUp()
     return ;
 }
 
+void GlogClientImpl::TryPropose(uint64_t index)
+{
+    assert(0 < index);
+    TryProposeRequest request;
+    request.set_index(index);
+    NoopMsg reply;
+
+    ClientContext context;
+    Status status = stub_->TryPropose(&context, request, &reply);
+    if (status.ok()) {
+        return ;
+    }
+
+    auto error_message = status.error_message();
+    logerr("Propose failed error_code %d error_message %s", 
+            static_cast<int>(status.error_code()), error_message.c_str());
+    return ;
+}
+
 std::tuple<std::string, std::string> GlogClientImpl::GetGlog(uint64_t index)
 {
     assert(0 < index);

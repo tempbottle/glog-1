@@ -18,6 +18,7 @@
 #include "paxos.h"
 #include "paxos.pb.h"
 #include "utils.h"
+#include "cqueue.h"
 #include "glog_server_impl.h"
 #include "glog_client_impl.h"
 
@@ -25,45 +26,6 @@ using namespace std;
 using namespace paxos;
 using namespace glog;
 
-
-class Queue {
-
-public:
-    Queue() = default;
-    ~Queue() = default;
-
-    void Push(std::unique_ptr<Message> msg)
-    {
-        {
-            lock_guard<mutex> lock(mutex_);
-            msg_.emplace(move(msg));
-        }
-
-        cv_.notify_one();
-    }
-
-    std::unique_ptr<Message> Pop()
-    {
-        {
-            unique_lock<mutex> lock(mutex_);
-            while (msg_.empty()) {
-                cv_.wait(lock, [&]() {
-                    return !msg_.empty();
-                });
-            }
-
-            assert(false == msg_.empty());
-            auto msg = move(msg_.front());
-            msg_.pop();
-            return msg;
-        }
-    }
-
-private:
-    std::mutex mutex_;
-    std::condition_variable cv_;
-    std::queue<std::unique_ptr<paxos::Message>> msg_;
-};
 
 
 int single_call(
@@ -85,7 +47,7 @@ int single_call(
 int RPCWorker(
         uint64_t selfid, 
         const std::map<uint64_t, std::string>& groups, 
-        Queue& queue)
+        CQueue<std::unique_ptr<paxos::Message>>& queue)
 {
     while (true) {
         unique_ptr<Message> msg = queue.Pop();
@@ -124,7 +86,7 @@ public:
             const std::map<uint64_t, std::string>& groups)
         : selfid_(selfid)
         , groups_(groups)
-        , queue_(make_shared<Queue>())
+        , queue_(make_shared<CQueue<unique_ptr<Message>>>())
         , rpc_worker_(make_shared<thread>(RPCWorker, selfid_, groups_, ref(*queue_)))
     {
         assert(0 < selfid_);
@@ -157,7 +119,7 @@ private:
     uint64_t selfid_;
     std::map<uint64_t, std::string> groups_;
 
-    std::shared_ptr<Queue> queue_;
+    std::shared_ptr<CQueue<std::unique_ptr<paxos::Message>>> queue_;
     std::shared_ptr<std::thread> rpc_worker_;
 };
 
@@ -227,6 +189,15 @@ void SimpleTryCatchUp(
     client.TryCatchUp();
 }
 
+void SimpleTryPropose(
+        uint64_t svrid, const std::map<uint64_t, std::string>& groups, 
+        uint64_t index)
+{
+    GlogClientImpl client(svrid, 
+            grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
+    client.TryPropose(index);
+}
+
     int
 main ( int argc, char *argv[] )
 {
@@ -257,6 +228,7 @@ main ( int argc, char *argv[] )
     }
 
     SimpleTryCatchUp(1ull, groups);
+    SimpleTryPropose(1ull, groups, 10ull);
 
     for (auto& v : vec) {
         v.get();

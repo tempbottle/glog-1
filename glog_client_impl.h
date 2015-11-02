@@ -33,6 +33,8 @@ public:
 
     void TryCatchUp();
 
+    void TryPropose(uint64_t index);
+
     std::tuple<std::string, std::string> GetGlog(uint64_t index);
 
 private:
