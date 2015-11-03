@@ -1,8 +1,11 @@
+#include <sstream>
 #include "glog_server_impl.h"
 #include "glog_client_impl.h"
 #include "paxos.h"
 #include "paxos.pb.h"
 #include "utils.h"
+#include "mem_storage.h"
+#include "callback.h"
 
 
 using namespace std;
@@ -10,6 +13,7 @@ using namespace std;
 namespace {
 
 using namespace glog;
+
 
 std::tuple<bool, uint64_t, uint64_t>
     FindMostUpdatePeer(
@@ -48,16 +52,31 @@ std::tuple<bool, uint64_t, uint64_t>
 namespace glog {
 
 GlogServiceImpl::GlogServiceImpl(
+        uint64_t selfid, 
         const std::map<uint64_t, std::string>& groups, 
-        std::unique_ptr<paxos::Paxos>&& paxos_log, 
-        paxos::Callback callback)
-    : groups_(groups)
+        std::unique_ptr<paxos::Paxos> paxos_log, 
+        MemStorage& storage, 
+        CQueue<std::unique_ptr<paxos::Message>>& msg_queue)
+    : proposing_seq_(selfid)
+    , groups_(groups)
     , paxos_log_(move(paxos_log))
-    , callback_(move(callback))
+    , storage_(storage)
+    , msg_queue_(msg_queue)
 {
-    assert(nullptr != paxos_log_);
-    assert(nullptr != callback_);
+
 }
+
+//GlogServiceImpl::GlogServiceImpl(
+//        const std::map<uint64_t, std::string>& groups, 
+//        std::unique_ptr<paxos::Paxos>&& paxos_log, 
+//        paxos::Callback callback)
+//    : groups_(groups)
+//    , paxos_log_(move(paxos_log))
+//    , callback_(move(callback))
+//{
+//    assert(nullptr != paxos_log_);
+//    assert(nullptr != callback_);
+//}
 
 GlogServiceImpl::~GlogServiceImpl() = default;
 
@@ -74,8 +93,11 @@ GlogServiceImpl::PostMsg(
             request->index(), static_cast<uint32_t>(request->type()), 
             request->peer_id(), request->to_id());
     const paxos::Message& msg = *request;
-    int ret = paxos_log_->Step(msg, callback_);
+
+    glog::CallBack<MemStorage> callback(storage_, msg_queue_);
+    int ret = paxos_log_->Step(msg, callback);
     if (0 != ret) {
+        // TODO: 1 == ret => rsp with chosen msg
         logerr("paxos_log.Step selfid %" PRIu64 " index %" PRIu64 " failed ret %d", 
                 paxos_log_->GetSelfId(), request->index(), ret);
 
@@ -100,11 +122,17 @@ GlogServiceImpl::Propose(
         logdebug("Propose datasize %" PRIu64 " peer %s", 
                 request->data().size(), peer.c_str());
     }
-    
+
+    ProposeValue value = ConvertInto(*request);
+    string proposing_data = ConvertInto(value);
+
     int ret = 0;
     uint64_t index = 0;
-    tie(ret, index) = paxos_log_->Propose(
-            {request->data().data(), request->data().size()}, callback_);
+    {
+        glog::CallBack<MemStorage> callback(storage_, msg_queue_);
+        tie(ret, index) = paxos_log_->Propose(
+                {proposing_data.data(), proposing_data.size()}, callback);
+    }
     reply->set_retcode(ret);
     if (0 != ret) {
         logerr("Propose ret %d", ret);
@@ -115,8 +143,35 @@ GlogServiceImpl::Propose(
     hassert(0 < index, "index %" PRIu64 "\n", index); 
     paxos_log_->Wait(index);
 
-    // TODO: check the chosen value ?
-    return grpc::Status::OK;
+    {
+        // ADD FOR TEST
+        assert(index <= paxos_log_->GetCommitedIndex()); 
+    }
+
+    // check data by read from storage
+    auto hs = storage_.Get(index);
+    assert(nullptr != hs);
+    const string& chosen_data = hs->accepted_value();
+    assert(false == chosen_data.empty());
+    logdebug("PROP: seq %" PRIu64 " timestaemp %" PRIu64, 
+            value.seq(), value.timestamp());
+    logdebug("SIZE: proposing_data %" PRIu64 " chosen_data %" PRIu64, 
+            proposing_data.size(), chosen_data.size());
+    if (proposing_data.size() == chosen_data.size()) {
+        ProposeValue chosen_value = PickleFrom(chosen_data); 
+        logdebug("CHOSEN: seq %" PRIu64 " timestamp %" PRIu64, 
+                chosen_value.seq(), chosen_value.timestamp());
+        if (chosen_value.seq() == value.seq() &&
+                chosen_value.timestamp() == value.timestamp()) {
+            assert(chosen_value.data() == value.data());
+            // only case
+            return grpc::Status::OK;
+        }
+    }
+
+    // else: propose preempted
+    return grpc::Status(
+            static_cast<grpc::StatusCode>(1), "Propose preempted");
 }
 
 grpc::Status
@@ -206,7 +261,8 @@ GlogServiceImpl::TryPropose(
         logdebug(" peer %s", peer.c_str());
     }
 
-    int retcode = paxos_log_->TryPropose(request->index(), callback_);
+    glog::CallBack<MemStorage> callback(storage_, msg_queue_);
+    int retcode = paxos_log_->TryPropose(request->index(), callback);
     if (0 != retcode) {
         logerr("TryPropose retcode %d", retcode);
         return grpc::Status(
@@ -239,6 +295,38 @@ GlogServiceImpl::GetGlog(
     return grpc::Status::OK;
 }
 
+glog::ProposeValue GlogServiceImpl::ConvertInto(const glog::ProposeRequest& request)
+{
+    ProposeValue value;
+    value.set_seq(proposing_seq_.fetch_add(groups_.size()));
+    value.set_timestamp(static_cast<uint64_t>(
+                chrono::duration_cast<chrono::milliseconds>(
+                    chrono::system_clock::now().time_since_epoch()).count()));
+    value.set_data(request.data());
+ 
+    return value;
+}
+
+std::string GlogServiceImpl::ConvertInto(const glog::ProposeValue& value)
+{
+    stringstream ss;
+    assert(true == value.SerializeToOstream(&ss));
+    // TODO: in-efficient copy
+    return ss.str();    
+}
+
+
+glog::ProposeValue GlogServiceImpl::PickleFrom(const std::string& data)
+{
+    ProposeValue value;
+    {
+        stringstream ss;
+        // TODO: in-efficient cpy
+        ss.str(data);
+        assert(true == value.ParseFromIstream(&ss));
+    }
+    return value;
+}
 
 } // namespace glog
 

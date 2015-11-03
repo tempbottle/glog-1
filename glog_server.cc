@@ -138,13 +138,11 @@ main ( int argc, char *argv[] )
     MemStorage storage;
     CQueue<std::unique_ptr<paxos::Message>> msg_queue;
 
-
     future<int> f = async(
             launch::async, 
             ClientPostMsgWorker, selfid, cref(groups), ref(msg_queue));
 
-    glog::CallBack<MemStorage> callback(storage, msg_queue);
-    GlogServiceImpl service(groups, move(paxos_log), callback);
+    GlogServiceImpl service(selfid, groups, move(paxos_log), storage, msg_queue);
     assert(nullptr == paxos_log);
 
     grpc::ServerBuilder builder;

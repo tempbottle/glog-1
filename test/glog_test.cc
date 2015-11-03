@@ -21,6 +21,7 @@
 #include "cqueue.h"
 #include "glog_server_impl.h"
 #include "glog_client_impl.h"
+#include "mem_storage.h"
 
 using namespace std;
 using namespace paxos;
@@ -130,8 +131,14 @@ void StartServer(uint64_t selfid, const std::map<uint64_t, std::string>& groups)
         unique_ptr<Paxos>{new Paxos{selfid, groups.size()}};
     assert(nullptr != paxos_log);
 
-    CallBack callback(selfid, groups);
-    GlogServiceImpl service(groups, move(paxos_log), callback);
+    MemStorage storage;
+    CQueue<std::unique_ptr<paxos::Message>> msg_queue;
+
+    auto f = async(launch::async, 
+            ClientPostMsgWorker, selfid, cref(groups), ref(msg_queue));
+
+    GlogServiceImpl service(
+            selfid, groups, move(paxos_log), storage, msg_queue);
     assert(nullptr == paxos_log);
 
     grpc::ServerBuilder builder;
@@ -144,6 +151,7 @@ void StartServer(uint64_t selfid, const std::map<uint64_t, std::string>& groups)
             selfid, groups.at(selfid).c_str());
 
     server->Wait();
+    f.get();
     return ;
 }
 
@@ -216,7 +224,7 @@ main ( int argc, char *argv[] )
 
     // test
     sleep(2);
-    for (int i = 0; i < 10;) {
+    for (int i = 0; i < 1;) {
         int ret = SimplePropose(i+1, 1ull, groups);
         if (0 == ret) {
             ++i;

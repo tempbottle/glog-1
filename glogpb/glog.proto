@@ -6,6 +6,11 @@ package glog;
 
 import "paxos.proto";
 
+message ProposeValue {
+    uint64 seq = 1;
+    uint64 timestamp = 2;
+    bytes data = 3;
+};
 
 message NoopMsg {
 };

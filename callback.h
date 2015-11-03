@@ -1,5 +1,10 @@
 #pragma once
 
+#include <memory>
+#include <cassert>
+#include "cqueue.h"
+#include "paxos.pb.h"
+#include "utils.h"
 
 
 namespace glog {

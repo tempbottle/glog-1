@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include "glog.grpc.pb.h"
 #include "paxos.h"
@@ -16,17 +17,27 @@ namespace glog {
     class NoopMsg;
 }
 
+template <typename EntryType>
+class CQueue;
+
 namespace glog {
+
+class MemStorage;
 
 
 class GlogServiceImpl final : public Glog::Service {
 
 public:
-    
     GlogServiceImpl(
+            uint64_t selfid, 
             const std::map<uint64_t, std::string>& groups, 
-            std::unique_ptr<paxos::Paxos>&& paxos_log, 
-            paxos::Callback callback); 
+            std::unique_ptr<paxos::Paxos> paxos_log, 
+            MemStorage& storage, 
+            CQueue<std::unique_ptr<paxos::Message>>& msg_queue);    
+//    GlogServiceImpl(
+//            const std::map<uint64_t, std::string>& groups, 
+//            std::unique_ptr<paxos::Paxos>&& paxos_log, 
+//            paxos::Callback callback); 
 
     ~GlogServiceImpl();
 
@@ -63,9 +74,19 @@ public:
             glog::GetGlogResponse* reply)    override;
 
 private:
+    glog::ProposeValue ConvertInto(const glog::ProposeRequest& request);
+    std::string ConvertInto(const glog::ProposeValue& value);
+
+    glog::ProposeValue PickleFrom(const std::string& data);
+
+private:
+    std::atomic<uint64_t> proposing_seq_;
     std::map<uint64_t, std::string> groups_;
     std::unique_ptr<paxos::Paxos> paxos_log_;
-    paxos::Callback callback_;
+    // TODO
+    MemStorage& storage_;
+    CQueue<std::unique_ptr<paxos::Message>>& msg_queue_;
+//     paxos::Callback callback_;
 }; 
 
 
