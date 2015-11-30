@@ -43,6 +43,12 @@ public:
 
     std::tuple<std::string, std::string> GetGlog(uint64_t index);
 
+    int Set(uint64_t index, gsl::cstring_view<> data);
+    std::tuple<int, uint64_t, std::string> Get(uint64_t index);
+
+    std::tuple<int, uint64_t> CreateANewLog(const std::string& logname);
+    std::tuple<int, uint64_t> QueryLogId(const std::string& logname);
+
 private:
     uint64_t svrid_;
     std::unique_ptr<glog::Glog::Stub> stub_;
@@ -73,7 +79,7 @@ private:
     grpc::CompletionQueue cq_;
     std::map<uint64_t, 
         std::tuple<
-            std::unique_ptr<grpc::ClientAsyncResponseReader<NoopMsg>>, 
+            std::unique_ptr<grpc::ClientAsyncResponseReader<RetCode>>, 
             grpc::Status, 
             NoopMsg>> rsp_map_;
 };

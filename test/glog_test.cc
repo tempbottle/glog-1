@@ -22,124 +22,32 @@
 #include "glog_server_impl.h"
 #include "glog_client_impl.h"
 #include "mem_storage.h"
+#include "callback.h"
 
 using namespace std;
 using namespace paxos;
 using namespace glog;
 
 
-
-int single_call(
-        const std::map<uint64_t, std::string>& groups, const Message& msg) 
-{
-    assert(0 != msg.to_id());
-    assert(0 != msg.peer_id());
-
-    auto svrid = msg.to_id();
-
-    glog::GlogClientImpl client(svrid, 
-            grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
-    client.PostMsg(msg);
-    logdebug("single_call PostMsg svrid %" PRIu64 
-            " msg type %d", svrid, static_cast<int>(msg.type()));
-    return 0;
-}
-
-int RPCWorker(
-        uint64_t selfid, 
-        const std::map<uint64_t, std::string>& groups, 
-        CQueue<std::unique_ptr<paxos::Message>>& queue)
-{
-    while (true) {
-        unique_ptr<Message> msg = queue.Pop();
-
-        // deal with the msg;
-        assert(nullptr != msg);
-        assert(selfid == msg->peer_id());
-        assert(0 < msg->index());
-
-        logdebug("TEST index %" PRIu64 " msgtype %d to_id %" PRIu64 " peer_id %" PRIu64 " ", 
-                msg->index(), static_cast<int>(msg->type()),
-                msg->to_id(), msg->peer_id());
-
-        int ret = 0;
-        if (0 != msg->to_id()) {
-            ret = single_call(groups, *msg);
-        } else {
-            // broadcast
-            for (auto& piter : groups) {
-                if (selfid == piter.first) {
-                    continue;
-                }
-
-                msg->set_to_id(piter.first);
-                ret = single_call(groups, *msg);
-            }
-        }
-    }
-}
-
-
-class CallBack {
-
-public:
-    CallBack(uint64_t selfid, 
-            const std::map<uint64_t, std::string>& groups)
-        : selfid_(selfid)
-        , groups_(groups)
-        , queue_(make_shared<CQueue<unique_ptr<Message>>>())
-        , rpc_worker_(make_shared<thread>(RPCWorker, selfid_, groups_, ref(*queue_)))
-    {
-        assert(0 < selfid_);
-        assert(groups_.end() != groups_.find(selfid_));
-        assert(nullptr != queue_);
-        assert(nullptr != rpc_worker_);
-        rpc_worker_->detach();
-    }
-
-    int operator()(
-            std::unique_ptr<HardState> hs, 
-            std::unique_ptr<Message> msg)
-    {
-        int ret = 0;
-        if (nullptr != hs) {
-            assert(0 < hs->index());
-            logdebug("TEST index %" PRIu64 " store hs", index);
-        }
-
-        if (nullptr != msg) {
-            queue_->Push(move(msg));
-        }
-
-        logdebug("TEST index %" PRIu64 " hs %p msg %p", 
-                index, hs.get(), msg.get());
-        return 0;
-    }
-
-private:
-    uint64_t selfid_;
-    std::map<uint64_t, std::string> groups_;
-
-    std::shared_ptr<CQueue<std::unique_ptr<paxos::Message>>> queue_;
-    std::shared_ptr<std::thread> rpc_worker_;
-};
-
-
 void StartServer(uint64_t selfid, const std::map<uint64_t, std::string>& groups)
 {
-    unique_ptr<Paxos> paxos_log = 
-        unique_ptr<Paxos>{new Paxos{selfid, groups.size()}};
-    assert(nullptr != paxos_log);
-
     MemStorage storage;
-    CQueue<std::unique_ptr<paxos::Message>> msg_queue;
+    printf ( "svrid %d storage %p\n", static_cast<int>(selfid), &storage );
 
-    auto f = async(launch::async, 
-            ClientPostMsgWorker, selfid, cref(groups), ref(msg_queue));
-
-    GlogServiceImpl service(
-            selfid, groups, move(paxos_log), storage, msg_queue);
-    assert(nullptr == paxos_log);
+    GlogServiceImpl service{selfid, groups, 
+        [&storage, selfid](uint64_t logid, uint64_t index) 
+            -> std::unique_ptr<paxos::HardState> {
+            auto hs = storage.Get(logid, index);
+            printf ( "TESTINFO: GET hs %p selfid %" PRIu64 " logid %" PRIu64 " index %" PRIu64 "\n", 
+                    hs.get(), selfid, logid, index);
+            return hs;
+        }, 
+        [&storage, selfid](const paxos::HardState& hs) -> int { 
+            int ret = storage.Set(hs);
+            printf ( "TESTINFO: SET hs %p selfid %" PRIu64 " logid %" PRIu64 " index %" PRIu64 "\n", 
+                    &hs, selfid, hs.logid(), hs.index());
+            return ret;
+        }};
 
     grpc::ServerBuilder builder;
     builder.AddListeningPort(
@@ -151,59 +59,147 @@ void StartServer(uint64_t selfid, const std::map<uint64_t, std::string>& groups)
             selfid, groups.at(selfid).c_str());
 
     server->Wait();
-    f.get();
     return ;
 }
 
-int SimplePropose(
-        int index, 
-        uint64_t svrid, 
-        const std::map<uint64_t, std::string>& groups)
-{
-    GlogClientImpl client(svrid, 
-            grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
+//int SimplePropose(
+//        int index, 
+//        uint64_t svrid, 
+//        const std::map<uint64_t, std::string>& groups)
+//{
+//    GlogClientImpl client(svrid, 
+//            grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
+//
+//    string sData("dengos@test.com");
+//    int ret = client.Propose({sData.data(), sData.size()});
+//    logdebug("try index %d client.Propose svrid %" PRIu64  " ret %d", 
+//            index, svrid, ret);
+//
+//    {
+//        string info, data;
+//
+//        tie(info, data) = client.GetGlog(index);
+//        logdebug("svrid %" PRIu64 " index %d info %s data %s", 
+//                svrid, index, info.c_str(), data.c_str());
+//    }
+//
+//    {
+//        int retcode = 0;
+//        uint64_t max_index = 0;
+//        uint64_t commited_index = 0;
+//        tie(retcode, max_index, commited_index) = client.GetPaxosInfo();
+//        logdebug("client.GetPaxosInfo retcode %d max_index %" PRIu64 
+//                 " commited_index %" PRIu64, 
+//                 retcode, max_index, commited_index);
+//    }
+//
+//    return ret;
+//}
+//
+//void SimpleTryCatchUp(
+//        uint64_t svrid, const std::map<uint64_t, std::string>& groups)
+//{
+//    GlogClientImpl client(svrid, 
+//            grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
+//    client.TryCatchUp();
+//}
+//
+//void SimpleTryPropose(
+//        uint64_t svrid, const std::map<uint64_t, std::string>& groups, 
+//        uint64_t index)
+//{
+//    GlogClientImpl client(svrid, 
+//            grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
+//    client.TryPropose(index);
+//}
 
-    string sData("dengos@test.com");
-    int ret = client.Propose({sData.data(), sData.size()});
-    logdebug("try index %d client.Propose svrid %" PRIu64  " ret %d", 
-            index, svrid, ret);
-
-    {
-        string info, data;
-
-        tie(info, data) = client.GetGlog(index);
-        logdebug("svrid %" PRIu64 " index %d info %s data %s", 
-                svrid, index, info.c_str(), data.c_str());
-    }
-
-    {
-        int retcode = 0;
-        uint64_t max_index = 0;
-        uint64_t commited_index = 0;
-        tie(retcode, max_index, commited_index) = client.GetPaxosInfo();
-        logdebug("client.GetPaxosInfo retcode %d max_index %" PRIu64 
-                 " commited_index %" PRIu64, 
-                 retcode, max_index, commited_index);
-    }
-
-    return ret;
-}
-
-void SimpleTryCatchUp(
+int SimpleTestCreateAndQueryLog(
+        int times, 
         uint64_t svrid, const std::map<uint64_t, std::string>& groups)
 {
+    assert(0 < times);
+
     GlogClientImpl client(svrid, 
             grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
-    client.TryCatchUp();
+
+    
+    paxos::RandomStrGen<10, 100> str_gen;
+    set<string> uniq_logname;
+    for (int i = 0; i < times; ++i) {
+        string logname = str_gen.Next();
+        while (uniq_logname.end() != uniq_logname.find(logname)) {
+            logname = str_gen.Next();
+        }
+
+        int ret = 0;
+        uint64_t logid = 0;
+        tie(ret, logid) = client.CreateANewLog(logname);
+        hassert(0 == ret, "CreateANewLog logname %s ret %d", logname.c_str(), ret);
+
+        while (true) {
+            ret = 0;
+            uint64_t ans_logid = 0;
+            tie(ret, ans_logid) = client.QueryLogId(logname);
+            hassert(0 <= ret, "QueryLogId logname %s ret %d", logname.c_str(), ret);
+            if (0 == ret) {
+                hassert(logid == ans_logid, "logname %s logid %" PRIu64 
+                        " ans_logid %" PRIu64, logname.c_str(), logid, ans_logid);
+                break;
+            }
+            printf ( "INFO logname %s QueryLogId ret %d\n", logname.c_str(), ret );
+            usleep(1* 1000);
+        }
+
+        printf ( "INFO logname %s logid %" PRIu64 "\n", logname.c_str(), logid );
+        uniq_logname.insert(logname);
+    }
+
+    return 0;
 }
 
-void SimpleTryPropose(
-        uint64_t svrid, const std::map<uint64_t, std::string>& groups, 
-        uint64_t index)
+int SimpleSetAndGetTest(
+        int times, 
+        uint64_t svrid, const std::map<uint64_t, std::string>& groups)
 {
+    assert(0 < times);
     GlogClientImpl client(svrid, 
             grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
-    client.TryPropose(index);
+
+    int ret = 0;
+    uint64_t commited_index = 0;
+    string commited_value;
+    tie(ret, commited_index, commited_value) = client.Get(1ull);
+    hassert(0 <= ret, "client.Get 1ull ret %d", ret);
+
+    string test_data;
+    {
+        paxos::RandomStrGen<100, 200> str_gen;
+        test_data = str_gen.Next();
+    }
+    assert(false == test_data.empty());
+    uint64_t max_index = commited_index + times;
+    
+    printf ( "test_data.size %" PRIu64 " commited_index %" PRIu64 
+            " max_index %" PRIu64 "\n", test_data.size(), commited_index, max_index );
+
+    for (uint64_t index = commited_index + 1; index < max_index; ++index) {
+        ret = 0;
+        commited_index = 0;
+        commited_value.clear();
+
+        printf ( "commited_index %" PRIu64 " index %" PRIu64 " times %d\n", 
+                commited_index, index, times );
+        ret = client.Set(index, {test_data.data(), test_data.size()});
+        hassert(0 == ret, "client.Set index %" PRIu64 " ret %d", index, ret);
+
+        tie(ret, commited_index, commited_value) = client.Get(index);
+        hassert(0 == ret, "client.Get index %" PRIu64 " ret %d", index, ret);
+
+        hassert(index == commited_index, 
+                "index %" PRIu64 " commited_index %" PRIu64, index, commited_index);
+        assert(commited_value == test_data);
+    }
+    return 0;
 }
 
     int
@@ -217,6 +213,7 @@ main ( int argc, char *argv[] )
 
     vector<future<void>> vec;
     for (auto piter : groups) {
+        cout << piter.first << ":" << piter.second << endl;
         auto res = async(launch::async, 
                 StartServer, piter.first, cref(groups));
         vec.push_back(move(res));
@@ -224,20 +221,28 @@ main ( int argc, char *argv[] )
 
     // test
     sleep(2);
-    for (int i = 0; i < 1;) {
-        int ret = SimplePropose(i+1, 1ull, groups);
-        if (0 == ret) {
-            ++i;
-            continue;
-        }
+//    for (int i = 0; i < 1;) {
+//        int ret = SimplePropose(i+1, 1ull, groups);
+//        printf ( "TEST SimplePropose ret %d\n", ret );
+//        if (0 == ret) {
+//            ++i;
+//            continue;
+//        }
+//
+//        // else
+//        usleep(1000);
+//    }
+//
+//    SimpleTryCatchUp(1ull, groups);
+//    SimpleTryPropose(1ull, groups, 10ull);
 
-        // else
-        usleep(1000);
-    }
-
-    SimpleTryCatchUp(1ull, groups);
-    SimpleTryPropose(1ull, groups, 10ull);
-
+    int test_times = 100;
+    auto t = paxos::measure::execution(SimpleTestCreateAndQueryLog, test_times, 1ull, groups);
+    cout << "SimpleTestCreateAndQueryLog " << test_times << " times ret " << std::get<0>(t)
+         << " cost time " << std::get<1>(t).count() << " ms" << endl;
+//    auto t = paxos::measure::execution(SimpleSetAndGetTest, 100, 1ull, groups);
+//    cout << "SimpleSetAndGetTest " << 100 << " times ret " << std::get<0>(t)
+//         << " cost time " << std::get<1>(t).count() << " ms" << endl;
     for (auto& v : vec) {
         v.get();
     }

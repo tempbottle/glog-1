@@ -34,6 +34,8 @@ public:
     std::tuple<std::unique_ptr<glog::SetRequest>, uint64_t>
         PackMetaInfoEntry(const std::string& logname);
 
+    uint64_t QueryLogId(const std::string& logname);
+
     paxos::Paxos& GetMetaInfoLog() {
         assert(nullptr != meta_log_);
         return *meta_log_;

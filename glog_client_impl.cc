@@ -8,6 +8,7 @@
 
 using grpc::ClientContext;
 using grpc::Status;
+using namespace std;
 
 
 namespace {
@@ -191,6 +192,132 @@ std::tuple<std::string, std::string> GlogClientImpl::GetGlog(uint64_t index)
     return std::make_tuple(move(error_message), "");
 }
 
+int GlogClientImpl::Set(uint64_t index, gsl::cstring_view<> data)
+{
+    SetRequest request;
+    request.set_index(index);
+    request.set_data(data.data(), data.size());
+
+    RetCode reply;
+    ClientContext context;
+    set_deadline(context, DEFAULT_TIMEOUT);
+
+    Status status = stub_->Set(&context, request, &reply);
+    if (!status.ok()) {
+        auto error_message = status.error_message();
+        logerr("failed error_code %d error_message %s", 
+                static_cast<int>(status.error_code()), error_message.c_str());
+        return -1;
+    }
+
+    if (0 != reply.ret()) {
+        logerr("index %" PRIu64 " Set ret %d", index, reply.ret());
+        return reply.ret();
+    }
+
+    logdebug("index %" PRIu64 " Set success", index);
+    return 0; // success
+}
+
+std::tuple<int, uint64_t, std::string> GlogClientImpl::Get(uint64_t index)
+{
+    if (0 == index) {
+        return std::make_tuple(-1, 0ull, "");
+    }
+
+    assert(0 < index);
+    GetRequest request;
+    request.set_index(index);
+
+    GetResponse reply;
+    ClientContext context;
+    set_deadline(context, DEFAULT_TIMEOUT);
+
+    Status status = stub_->Get(&context, request, &reply);
+    if (!status.ok()) {
+        auto error_message = status.error_message();
+        logerr("failed error_code %d error_message %s", 
+                static_cast<int>(status.error_code()), error_message.c_str());
+        return std::make_tuple(-1, 0ull, "");
+    }
+
+    if (0 > reply.ret()) {
+        logerr("failed index %" PRIu64 " ret %d", index, reply.ret());
+        return std::make_tuple(reply.ret(), 0ull, "");
+    }
+
+    logdebug("index %" PRIu64 " Get success", index);
+    return std::make_tuple(reply.ret(), 
+            reply.commited_index(), 0 != reply.ret() ? "" : reply.data());
+}
+
+std::tuple<int, uint64_t>
+GlogClientImpl::CreateANewLog(const std::string& logname)
+{
+    if (true == logname.empty()) {
+        return make_tuple(-1, 0ull);
+    }
+
+    assert(false == logname.empty());
+    PaxosLogName request;
+    request.set_logname(logname);
+
+    PaxosLogId reply;
+    ClientContext context;
+    set_deadline(context, DEFAULT_TIMEOUT);
+
+    auto status = stub_->CreateANewLog(&context, request, &reply);
+    if (!status.ok()) {
+        auto error_message = status.error_message();
+        logerr("%s failed error_code %d error_message %s", logname.c_str(), 
+                static_cast<int>(status.error_code()), error_message.c_str());
+        return std::make_tuple(-1, 0ull);
+    }
+
+    if (0 > reply.ret()) {
+        logerr("failed index %" PRIu64 " ret %d", index, reply.ret());
+        return std::make_tuple(reply.ret(), 0ull);
+    }
+
+    logdebug("INFO logname %s %s ret %d logid %" PRIu64, 
+            logname.c_str(), __func__, reply.ret(), reply.logid());
+    return make_tuple(reply.ret(), reply.logid());
+}
+
+std::tuple<int, uint64_t>
+GlogClientImpl::QueryLogId(const std::string& logname)
+{
+    if (true == logname.empty()) {
+        return make_tuple(-1, 0ull);
+    }
+
+    assert(false == logname.empty());
+    PaxosLogName request;
+    request.set_logname(logname);
+
+    PaxosLogId reply;
+    ClientContext context;
+    set_deadline(context, DEFAULT_TIMEOUT);
+
+    auto status = stub_->QueryLogId(&context, request, &reply);
+    if (!status.ok()) {
+        auto error_message = status.error_message();
+        logerr("%s failed error_code %d error_message %s", logname.c_str(), 
+                static_cast<int>(status.error_code()), error_message.c_str());
+        return std::make_tuple(-1, 0ull);
+    }
+
+    if (0 > reply.ret()) {
+        logerr("failed index %" PRIu64 " ret %d", index, reply.ret());
+        return std::make_tuple(reply.ret(), 0ull);
+    }
+
+    logdebug("INFO logname %s %s ret %d logid %" PRIu64, 
+            logname.c_str(), __func__, reply.ret(), reply.logid());
+    return make_tuple(reply.ret(), reply.logid());
+}
+
+
 GlogAsyncClientImpl::GlogAsyncClientImpl(
         const uint64_t selfid, 
         std::shared_ptr<grpc::Channel> channel)
@@ -226,14 +353,15 @@ void GlogAsyncClientImpl::gc()
 
 void GlogAsyncClientImpl::PostMsg(const paxos::Message& msg)
 {
-    ClientContext context;
-
-    uint64_t seq = ++rpc_seq_;
-    auto& t = rsp_map_[seq];
-    std::get<0>(t) = stub_->AsyncPostMsg(&context, msg, &cq_);
-    std::get<0>(t)->Finish(&std::get<2>(t), &std::get<1>(t), reinterpret_cast<void*>(seq));
-    // DO NOT CALL cq_.Next(...); // block wait
-    return ;
+    return ; // TODO
+//    ClientContext context;
+//
+//    uint64_t seq = ++rpc_seq_;
+//    auto& t = rsp_map_[seq];
+//    std::get<0>(t) = stub_->AsyncPostMsg(&context, msg, &cq_);
+//    std::get<0>(t)->Finish(&std::get<2>(t), &std::get<1>(t), reinterpret_cast<void*>(seq));
+//    // DO NOT CALL cq_.Next(...); // block wait
+//    return ;
 }
 
 

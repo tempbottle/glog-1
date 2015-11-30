@@ -4,8 +4,8 @@
 #include <string>
 #include <memory>
 #include <stdint.h>
+#include <rapidjson/document.h>
 #include "gsl.h"
-#include "rapidjson/document.h"
 
 
 namespace glog {

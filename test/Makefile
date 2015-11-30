@@ -1,6 +1,6 @@
 
 CPPFLAGS += -isystem $(GTEST_DIR)/include -std=c++14 -stdlib=libc++
-CXXFLAGS += -g -Wall -Wextra
+CXXFLAGS += -g -Wall -Wextra -D TEST_DEBUG
 
 
 
@@ -12,6 +12,7 @@ GITHUB_PATH=/Users/dengoswei/project/src/github.com/
 INCLS += -I../ -I../glogpb/ -I../utils/ -I $(GITHUB_PATH)/dengoswei/cpaxos -I $(GITHUB_PATH)/dengoswei/cpaxos/cpaxospb/
 INCLS += -I/Users/dengoswei/open-src/github.com/microsoft/GSL/include
 INCLS += -I/Users/dengoswei/project/include
+INCLS += -I/usr/local/include
 LINKS += -L/Users/dengoswei/project/lib
 LINKS += -lpthread -lprotobuf -lcpaxos
 LINKS += -lgrpc++_unsecure -lgrpc -lgpr -ldl
@@ -62,7 +63,15 @@ config_test: config_test.o ../utils/config.o gtest_main.a
 	$(BUILDEXE)
 
 glog_test: glog_test.o ../glogpb/glog.pb.o ../glogpb/glog.grpc.pb.o \
-	../glog_server_impl.o ../glog_client_impl.o ../utils/config.o
+	../glog_server_impl.o ../glog_client_impl.o ../utils/config.o \
+	../glog_metainfo.o
+	$(BUILDEXE)
+
+async_test: async_test.o
+	$(BUILDEXE)
+
+metainfo_test: metainfo_test.o ../glog_metainfo.o \
+	../glogpb/glog.pb.o
 	$(BUILDEXE)
 
 %.o:%.cc

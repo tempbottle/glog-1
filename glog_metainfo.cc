@@ -32,6 +32,9 @@ void AsyncApplyWorker(
         if (true == stop) {
             break;
         }
+
+        // TODO: add wait timeout!
+        meta_log.Wait(commited_index + 1);
     }
 
     logerr("INFO %s exist", __func__);
@@ -157,6 +160,22 @@ GlogMetaInfo::PackMetaInfoEntry(const std::string& logname)
     request->set_index(set_index);
     request->set_data(value);
     return make_tuple(move(request), new_logid);
+}
+
+uint64_t GlogMetaInfo::QueryLogId(const std::string& logname)
+{
+    assert(false == logname.empty());
+
+    lock_guard<mutex> lock(meta_log_mutex_);
+    if (state_.end() == state_.find(logname)) {
+        return 0; // don't exist
+    }
+
+    uint64_t logid = state_[logname];
+    assert(0 < logid);
+    assert(map_plog_.end() != map_plog_.find(logid));
+    assert(nullptr != map_plog_[logid]);
+    return logid;
 }
 
 

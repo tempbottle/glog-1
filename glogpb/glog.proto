@@ -12,7 +12,17 @@ message ProposeValue {
     bytes data = 3;
 };
 
+message MetaInfoEntry {
+    uint64 logid = 1;
+    bytes logname = 2;
+    uint32 timestamp = 3;
+};
+
 message NoopMsg {
+};
+
+message RetCode {
+    int32 ret = 1;
 };
 
 
@@ -25,7 +35,7 @@ message ProposeResponse {
 };
 
 message GetGlogRequest {
-    uint64 index = 1;
+    uint64 index = 2;
 };
 
 message GetGlogResponse {
@@ -40,6 +50,35 @@ message PaxosInfo {
 
 message TryProposeRequest {
     uint64 index = 1;
+};
+
+
+message GetRequest {
+    uint64 logid = 1;
+    uint64 index = 2;
+};
+
+message GetResponse {
+    int32 ret = 1;
+    uint64 commited_index = 2;
+    bytes data = 3;
+};
+
+message SetRequest {
+    uint64 logid = 1;
+    uint64 index = 2;
+    bytes data = 3;
+};
+
+
+// it's bad name, i know it!
+message PaxosLogName {
+    bytes logname = 1;
+};
+
+message PaxosLogId {
+    int32 ret = 1;
+    uint64 logid = 2;
 };
 
 service Glog {
@@ -57,6 +96,14 @@ service Glog {
 
     // ADD FOR TEST
     rpc GetGlog (GetGlogRequest) returns (GetGlogResponse) {}
+
+    rpc Get (GetRequest) returns (GetResponse) {}
+
+    rpc Set (SetRequest) returns (RetCode) {}
+
+    rpc CreateANewLog (PaxosLogName) returns (PaxosLogId) {}
+
+    rpc QueryLogId (PaxosLogName) returns (PaxosLogId) {}
 
 }
 

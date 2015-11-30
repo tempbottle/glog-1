@@ -10,6 +10,7 @@ INCLS += -I./utils/ -I./glogpb/
 INCLS += -I/Users/dengoswei/open-src/github.com/tanakh/cmdline/
 INCLS += -I/Users/dengoswei/open-src/github.com/microsoft/GSL/include
 INCLS += -I/Users/dengoswei/project/include
+INCLS += -I/usr/local/include
 LINKS += -L/Users/dengoswei/project/lib
 LINKS += -lpthread -lprotobuf -lcpaxos
 LINKS += -lgrpc++_unsecure -lgrpc -lgpr -ldl 
@@ -25,7 +26,7 @@ GRPC_CPP_PLUGIN_PATH ?= `which $(GRPC_CPP_PLUGIN)`
 all: $(TESTS)
 
 clean :
-	rm -f glog_server glog_tools *.o ./glogpb/*.o ./utils/*.o 
+	rm -f glog_server glog_tools *.o ./glogpb/*.o ./utils/*.o  glogpb/*.pb.cc glogpb/*.pb.h
 
 glog_server: glog_server.o glog_server_impl.o glog_client_impl.o \
 	glogpb/glog.grpc.pb.o glogpb/glog.pb.o utils/config.o

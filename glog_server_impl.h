@@ -4,6 +4,8 @@
 #include <memory>
 #include "glog.grpc.pb.h"
 #include "paxos.h"
+#include "cqueue.h"
+#include "glog_comm.h"
 
 
 namespace paxos {
@@ -20,9 +22,11 @@ namespace glog {
 template <typename EntryType>
 class CQueue;
 
+
 namespace glog {
 
-class MemStorage;
+class GlogMetaInfo;
+class AsyncWorker;
 
 
 class GlogServiceImpl final : public Glog::Service {
@@ -31,47 +35,67 @@ public:
     GlogServiceImpl(
             uint64_t selfid, 
             const std::map<uint64_t, std::string>& groups, 
-            std::unique_ptr<paxos::Paxos> paxos_log, 
-            MemStorage& storage, 
-            CQueue<std::unique_ptr<paxos::Message>>& msg_queue);    
-//    GlogServiceImpl(
-//            const std::map<uint64_t, std::string>& groups, 
-//            std::unique_ptr<paxos::Paxos>&& paxos_log, 
-//            paxos::Callback callback); 
+            ReadCB readcb, 
+            WriteCB writecb);
 
     ~GlogServiceImpl();
 
 
     grpc::Status PostMsg(
             grpc::ServerContext* context, 
-            const paxos::Message* request, glog::NoopMsg* reply) override;
-
-    grpc::Status Propose(
-            grpc::ServerContext* context, 
-            const glog::ProposeRequest* request, 
-            glog::ProposeResponse* reply)    override;
-
-    // internal use
-    grpc::Status GetPaxosInfo(
-            grpc::ServerContext* context, 
-            const glog::NoopMsg* request, 
-            glog::PaxosInfo* reply) override;
-
-    grpc::Status TryCatchUp(
-            grpc::ServerContext* context, 
-            const glog::NoopMsg* request, 
+            const paxos::Message* request, 
             glog::NoopMsg* reply) override;
 
-    grpc::Status TryPropose(
-            grpc::ServerContext* context, 
-            const glog::TryProposeRequest* request, 
-            glog::NoopMsg* reply) override;
+//    grpc::Status Propose(
+//            grpc::ServerContext* context, 
+//            const glog::ProposeRequest* request, 
+//            glog::ProposeResponse* reply)    override;
+//
+//    // internal use
+//    grpc::Status GetPaxosInfo(
+//            grpc::ServerContext* context, 
+//            const glog::NoopMsg* request, 
+//            glog::PaxosInfo* reply) override;
+//
+//    grpc::Status TryCatchUp(
+//            grpc::ServerContext* context, 
+//            const glog::NoopMsg* request, 
+//            glog::NoopMsg* reply) override;
+//
+//    grpc::Status TryPropose(
+//            grpc::ServerContext* context, 
+//            const glog::TryProposeRequest* request, 
+//            glog::NoopMsg* reply) override;
+//
+//    // test
+//    grpc::Status GetGlog(
+//            grpc::ServerContext* context, 
+//            const glog::GetGlogRequest* request, 
+//            glog::GetGlogResponse* reply)    override;
 
-    // test
-    grpc::Status GetGlog(
+    // read, write
+    grpc::Status Get(
             grpc::ServerContext* context, 
-            const glog::GetGlogRequest* request, 
-            glog::GetGlogResponse* reply)    override;
+            const glog::GetRequest* request, 
+            glog::GetResponse* response) override;
+
+    grpc::Status Set(
+            grpc::ServerContext* context, 
+            const glog::SetRequest* request, 
+            glog::RetCode* response) override;
+
+    grpc::Status CreateANewLog(
+            grpc::ServerContext* context, 
+            const glog::PaxosLogName* request, 
+            glog::PaxosLogId* response) override;
+
+    grpc::Status QueryLogId(
+            grpc::ServerContext* context, 
+            const glog::PaxosLogName* request, 
+            glog::PaxosLogId* response) override;
+
+public:
+    // async worker
 
 private:
     glog::ProposeValue ConvertInto(const glog::ProposeRequest& request);
@@ -79,14 +103,25 @@ private:
 
     glog::ProposeValue PickleFrom(const std::string& data);
 
+    glog::ProposeValue Convert(const std::string& orig_data);
+
+
 private:
     std::atomic<uint64_t> proposing_seq_;
     std::map<uint64_t, std::string> groups_;
-    std::unique_ptr<paxos::Paxos> paxos_log_;
     // TODO
-    MemStorage& storage_;
-    CQueue<std::unique_ptr<paxos::Message>>& msg_queue_;
-//     paxos::Callback callback_;
+    //
+    ReadCB readcb_;
+    WriteCB writecb_;
+ 
+    CQueue<std::unique_ptr<paxos::Message>> send_msg_queue_;
+    CQueue<std::unique_ptr<paxos::Message>> recv_msg_queue_;
+
+    std::unique_ptr<GlogMetaInfo> metainfo_;
+
+    // async worker
+    std::unique_ptr<AsyncWorker> async_sendmsg_worker_;
+    std::unique_ptr<AsyncWorker> async_recvmsg_worker_;
 }; 
 
 
