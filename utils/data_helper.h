@@ -22,7 +22,16 @@ std::unique_ptr<T> Pickle(const std::string& raw_data)
     return std::make_unique<T>(std::move(value));
 }
 
+template <typename T>
+std::unique_ptr<std::string> Dump(T& value)
+{
+    std::stringstream ss;
+    if (false == value.SerializeToOstream(&ss)) {
+        return nullptr;
+    }
 
+    return std::make_unique<std::string>(ss.str());
+}
 
 
 } // namespace glog

@@ -22,37 +22,6 @@ void set_deadline(grpc::ClientContext& context, int milliseconds)
             std::chrono::milliseconds{milliseconds});
 }
 
-void ClientCallPostMsg(
-        const std::map<uint64_t, std::string>& groups, const paxos::Message& msg)
-{
-    assert(0 < msg.to_id());
-    assert(0 < msg.peer_id());
-    static __thread 
-        std::map<uint64_t, std::unique_ptr<glog::GlogClientImpl>>* cache;
-    if (nullptr == cache) {
-        cache = new std::map<uint64_t, std::unique_ptr<glog::GlogClientImpl>>{};
-    }
-
-    assert(nullptr != cache);
-
-    auto& client_cache = *cache;
-
-    auto svrid = msg.to_id();
-    if (client_cache.end() == client_cache.find(svrid)) {
-        client_cache.emplace(svrid, std::unique_ptr<glog::GlogClientImpl>{
-                new glog::GlogClientImpl{svrid, grpc::CreateChannel(
-                        groups.at(svrid), grpc::InsecureCredentials())}});
-    }
-
-    auto& client = client_cache.at(svrid);
-    assert(nullptr != client);
-
-    client->PostMsg(msg);
-    logdebug("PostMsg svrid %" PRIu64 
-            " msg type %d", svrid, static_cast<int>(msg.type()));
-    return ;
-}
-
 
 }
 
@@ -192,9 +161,11 @@ std::tuple<std::string, std::string> GlogClientImpl::GetGlog(uint64_t index)
     return std::make_tuple(move(error_message), "");
 }
 
-int GlogClientImpl::Set(uint64_t index, gsl::cstring_view<> data)
+glog::ErrorCode 
+GlogClientImpl::Set(uint64_t logid, uint64_t index, gsl::cstring_view<> data)
 {
     SetRequest request;
+    request.set_logid(logid);
     request.set_index(index);
     request.set_data(data.data(), data.size());
 
@@ -205,28 +176,32 @@ int GlogClientImpl::Set(uint64_t index, gsl::cstring_view<> data)
     Status status = stub_->Set(&context, request, &reply);
     if (!status.ok()) {
         auto error_message = status.error_message();
-        logerr("failed error_code %d error_message %s", 
+        logerr("logid %" PRIu64 " index " PRIu64 
+                " failed error_code %d error_message %s", logid, index, 
                 static_cast<int>(status.error_code()), error_message.c_str());
-        return -1;
+        return ErrorCode::GRPC_ERROR;
     }
 
-    if (0 != reply.ret()) {
-        logerr("index %" PRIu64 " Set ret %d", index, reply.ret());
+    if (ErrorCode::OK != reply.ret()) {
+        logerr("logid %" PRIu64 " index %" PRIu64 " Set ret %d", 
+                logid, index, reply.ret());
         return reply.ret();
     }
 
-    logdebug("index %" PRIu64 " Set success", index);
-    return 0; // success
+    logdebug("logid %" PRIu64 " index %" PRIu64 " Set success", logid, index);
+    return ErrorCode::OK; // success
 }
 
-std::tuple<int, uint64_t, std::string> GlogClientImpl::Get(uint64_t index)
+std::tuple<glog::ErrorCode, uint64_t, std::string> 
+GlogClientImpl::Get(uint64_t logid, uint64_t index)
 {
     if (0 == index) {
-        return std::make_tuple(-1, 0ull, "");
+        return std::make_tuple(ErrorCode::INVALID_PARAMS, 0ull, "");
     }
 
     assert(0 < index);
     GetRequest request;
+    request.set_logid(logid);
     request.set_index(index);
 
     GetResponse reply;
@@ -236,26 +211,29 @@ std::tuple<int, uint64_t, std::string> GlogClientImpl::Get(uint64_t index)
     Status status = stub_->Get(&context, request, &reply);
     if (!status.ok()) {
         auto error_message = status.error_message();
-        logerr("failed error_code %d error_message %s", 
+        logerr("logid %" PRIu64 " index %" PRIu64
+                "failed error_code %d error_message %s", logid, index, 
                 static_cast<int>(status.error_code()), error_message.c_str());
-        return std::make_tuple(-1, 0ull, "");
+        return std::make_tuple(ErrorCode::GRPC_ERROR, 0ull, "");
     }
 
-    if (0 > reply.ret()) {
-        logerr("failed index %" PRIu64 " ret %d", index, reply.ret());
+    if (ErrorCode::OK != reply.ret() || 
+            ErrorCode::UNCOMMITED_INDEX != reply.ret()) {
+        logerr("logid %" PRIu64 " failed index %" PRIu64 " ret %d", 
+                logid, index, reply.ret());
         return std::make_tuple(reply.ret(), 0ull, "");
     }
 
-    logdebug("index %" PRIu64 " Get success", index);
+    logdebug("logid %" PRIu64 " index %" PRIu64 " Get success", logid, index);
     return std::make_tuple(reply.ret(), 
             reply.commited_index(), 0 != reply.ret() ? "" : reply.data());
 }
 
-std::tuple<int, uint64_t>
+std::tuple<glog::ErrorCode, uint64_t>
 GlogClientImpl::CreateANewLog(const std::string& logname)
 {
     if (true == logname.empty()) {
-        return make_tuple(-1, 0ull);
+        return make_tuple(ErrorCode::INVALID_PARAMS, 0ull);
     }
 
     assert(false == logname.empty());
@@ -271,10 +249,11 @@ GlogClientImpl::CreateANewLog(const std::string& logname)
         auto error_message = status.error_message();
         logerr("%s failed error_code %d error_message %s", logname.c_str(), 
                 static_cast<int>(status.error_code()), error_message.c_str());
-        return std::make_tuple(-1, 0ull);
+        return std::make_tuple(ErrorCode::GRPC_ERROR, 0ull);
     }
 
-    if (0 > reply.ret()) {
+    if (ErrorCode::OK != reply.ret() || 
+            ErrorCode::UNCOMMITED_INDEX != reply.ret()) {
         logerr("failed index %" PRIu64 " ret %d", index, reply.ret());
         return std::make_tuple(reply.ret(), 0ull);
     }
@@ -284,11 +263,11 @@ GlogClientImpl::CreateANewLog(const std::string& logname)
     return make_tuple(reply.ret(), reply.logid());
 }
 
-std::tuple<int, uint64_t>
+std::tuple<glog::ErrorCode, uint64_t>
 GlogClientImpl::QueryLogId(const std::string& logname)
 {
     if (true == logname.empty()) {
-        return make_tuple(-1, 0ull);
+        return make_tuple(ErrorCode::INVALID_PARAMS, 0ull);
     }
 
     assert(false == logname.empty());
@@ -304,10 +283,11 @@ GlogClientImpl::QueryLogId(const std::string& logname)
         auto error_message = status.error_message();
         logerr("%s failed error_code %d error_message %s", logname.c_str(), 
                 static_cast<int>(status.error_code()), error_message.c_str());
-        return std::make_tuple(-1, 0ull);
+        return std::make_tuple(ErrorCode::GRPC_ERROR, 0ull);
     }
 
-    if (0 > reply.ret()) {
+    if (ErrorCode::OK != reply.ret() || 
+            ErrorCode::LOGNAME_DONT_EXIST) {
         logerr("failed index %" PRIu64 " ret %d", index, reply.ret());
         return std::make_tuple(reply.ret(), 0ull);
     }
@@ -317,87 +297,6 @@ GlogClientImpl::QueryLogId(const std::string& logname)
     return make_tuple(reply.ret(), reply.logid());
 }
 
-
-GlogAsyncClientImpl::GlogAsyncClientImpl(
-        const uint64_t selfid, 
-        std::shared_ptr<grpc::Channel> channel)
-    : selfid_(selfid)
-    , stub_(glog::Glog::NewStub(channel))
-{
-
-}
-
-GlogAsyncClientImpl::~GlogAsyncClientImpl() = default;
-
-void GlogAsyncClientImpl::gc()
-{
-    const size_t LOW_WATER_MARK = 0;
-    void* got_tag = nullptr;
-    bool ok = false;
-    while (rsp_map_.size() > LOW_WATER_MARK) {
-
-        cq_.Next(&got_tag, &ok);
-        if (ok) {
-            auto seq = reinterpret_cast<uint64_t>(got_tag);
-            assert(rsp_map_.end() != rsp_map_.find(seq));
-
-            auto& t = rsp_map_[seq];
-            if (!std::get<1>(t).ok()) {
-                auto err_msg = std::get<1>(t).error_message();
-                logerr("rsp seq %" PRIu64 " error msg %s", seq, err_msg.c_str());
-            }
-            rsp_map_.erase(seq); // success gc 1
-        }
-    }
-}
-
-void GlogAsyncClientImpl::PostMsg(const paxos::Message& msg)
-{
-    return ; // TODO
-//    ClientContext context;
-//
-//    uint64_t seq = ++rpc_seq_;
-//    auto& t = rsp_map_[seq];
-//    std::get<0>(t) = stub_->AsyncPostMsg(&context, msg, &cq_);
-//    std::get<0>(t)->Finish(&std::get<2>(t), &std::get<1>(t), reinterpret_cast<void*>(seq));
-//    // DO NOT CALL cq_.Next(...); // block wait
-//    return ;
-}
-
-
-int ClientPostMsgWorker(
-        uint64_t selfid, 
-        const std::map<uint64_t, std::string>& groups, 
-        CQueue<std::unique_ptr<paxos::Message>>& msg_queue)
-{
-    // TODO: bStop ?
-    while (true) {
-        std::unique_ptr<paxos::Message> msg = msg_queue.Pop();
-
-        // deal with the msg;
-        assert(nullptr != msg);
-        assert(selfid == msg->peer_id());
-        assert(0 < msg->index());
-
-        logdebug("TEST index %" PRIu64 " msgtype %d to_id %" PRIu64 " peer_id %" PRIu64 " ", 
-                msg->index(), static_cast<int>(msg->type()),
-                msg->to_id(), msg->peer_id());
-
-        if (0 != msg->to_id()) {
-            ClientCallPostMsg(groups, *msg);
-        } else {
-            // broadcast
-            for (auto& piter : groups) {
-                if (selfid == piter.first) {
-                    continue;
-                }
-
-                msg->set_to_id(piter.first);
-                ClientCallPostMsg(groups, *msg);
-            }
-        }
-    }
-}
 
 } // namespace glog
 

@@ -35,8 +35,8 @@ public:
     GlogServiceImpl(
             uint64_t selfid, 
             const std::map<uint64_t, std::string>& groups, 
-            ReadCB readcb, 
-            WriteCB writecb);
+            ReadCBType readcb, 
+            WriteCBType writecb);
 
     ~GlogServiceImpl();
 
@@ -46,11 +46,6 @@ public:
             const paxos::Message* request, 
             glog::NoopMsg* reply) override;
 
-//    grpc::Status Propose(
-//            grpc::ServerContext* context, 
-//            const glog::ProposeRequest* request, 
-//            glog::ProposeResponse* reply)    override;
-//
 //    // internal use
 //    grpc::Status GetPaxosInfo(
 //            grpc::ServerContext* context, 
@@ -105,17 +100,19 @@ private:
 
     glog::ProposeValue Convert(const std::string& orig_data);
 
+    glog::ProposeValue CreateANewProposeValue(const std::string& orig_data);
+
 
 private:
     std::atomic<uint64_t> proposing_seq_;
     std::map<uint64_t, std::string> groups_;
     // TODO
     //
-    ReadCB readcb_;
-    WriteCB writecb_;
+    ReadCBType readcb_;
+    WriteCBType writecb_;
  
-    CQueue<std::unique_ptr<paxos::Message>> send_msg_queue_;
-    CQueue<std::unique_ptr<paxos::Message>> recv_msg_queue_;
+    MessageQueue send_msg_queue_;
+    MessageQueue recv_msg_queue_;
 
     std::unique_ptr<GlogMetaInfo> metainfo_;
 

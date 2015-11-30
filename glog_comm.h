@@ -3,18 +3,22 @@
 #include <functional>
 #include <memory>
 #include <stdint.h>
+#include "utils/cqueue.h"
 
 
 namespace paxos {
     class HardState;
+    class Message;
 } // namespace paxos
 
 namespace glog {
 
 
-using ReadCB = std::function<
+using ReadCBType = std::function<
     std::unique_ptr<paxos::HardState>(uint64_t, uint64_t)>;
-using WriteCB = std::function<int(const paxos::HardState&)>;
+using WriteCBType = std::function<int(const paxos::HardState&)>;
+
+using MessageQueue = CQueue<paxos::Message>;
 
 
 

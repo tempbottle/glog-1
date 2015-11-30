@@ -11,6 +11,7 @@
 #include "callback.h"
 #include "glog_metainfo.h"
 #include "utils/async_worker.h"
+#include "utils/data_helper.h"
 
 
 #define ASSERT_INPUT_PARAMS  {    \
@@ -58,16 +59,16 @@ std::tuple<bool, uint64_t, uint64_t>
             peer_commited_index <= self_commited_index, peer_id, peer_commited_index);
 }
 
-std::unique_ptr<std::string> Dump(const glog::ProposeValue& value)
-{
-    stringstream ss;
-    bool ret = value.SerializeToOstream(&ss);
-    if (false == ret) {
-        return nullptr;
-    }
-
-    return unique_ptr<string>(new string(ss.str()));
-}
+//std::unique_ptr<std::string> Dump(const glog::ProposeValue& value)
+//{
+//    stringstream ss;
+//    bool ret = value.SerializeToOstream(&ss);
+//    if (false == ret) {
+//        return nullptr;
+//    }
+//
+//    return unique_ptr<string>(new string(ss.str()));
+//}
 
 std::unique_ptr<glog::ProposeValue> Pickle(const std::string& data)
 {
@@ -121,7 +122,7 @@ void ClientCallPostMsg(
 void SendPostMsgWorker(
         uint64_t selfid, 
         const std::map<uint64_t, std::string>& groups, 
-        CQueue<std::unique_ptr<paxos::Message>>& send_msg_queue, 
+        MessageQueue& send_msg_queue, 
         std::atomic<bool>& stop)
 {
     std::map<uint64_t, std::unique_ptr<glog::GlogClientImpl>> client_cache;
@@ -130,7 +131,10 @@ void SendPostMsgWorker(
     // read atomi<bool> by seq-order might be too cost;
     // => add timeout in Pop;
     while (false == stop) {
-        std::unique_ptr<paxos::Message> msg = send_msg_queue.Pop();
+        auto msg = send_msg_queue.Pop(chrono::microseconds{100});
+        if (nullptr == msg) {
+            continue;
+        }
 
         // deal with the msg;
         assert(nullptr != msg);
@@ -162,13 +166,16 @@ void SendPostMsgWorker(
 void RecvPostMsgWorker(
         uint64_t selfid, 
         GlogMetaInfo* metainfo, 
-        CQueue<std::unique_ptr<paxos::Message>>& recv_msg_queue, 
+        MessageQueue& recv_msg_queue, 
         std::atomic<bool>& stop)
 {
     assert(nullptr != metainfo);
     // TODO: fix while loop: stop
     while (false == stop) {
-        std::unique_ptr<paxos::Message> recv_msg = recv_msg_queue.Pop();
+        auto recv_msg = recv_msg_queue.Pop(chrono::microseconds{100});
+        if (nullptr == recv_msg) {
+            continue;
+        }
 
         assert(nullptr != recv_msg);
         assert(selfid == recv_msg->to_id());
@@ -204,8 +211,8 @@ void RecvPostMsgWorker(
 GlogServiceImpl::GlogServiceImpl(
         uint64_t selfid, 
         const std::map<uint64_t, std::string>& groups, 
-        ReadCB readcb, 
-        WriteCB writecb)
+        ReadCBType readcb, 
+        WriteCBType writecb)
     : proposing_seq_(selfid)
     , groups_(groups)
     , readcb_(readcb)
@@ -238,8 +245,9 @@ GlogServiceImpl::GlogServiceImpl(
             RecvPostMsgWorker, selfid, metainfo_.get(), ref(recv_msg_queue_));
 }
 
-
+  
 GlogServiceImpl::~GlogServiceImpl() = default;
+
 
 grpc::Status 
 GlogServiceImpl::PostMsg(
@@ -257,77 +265,10 @@ GlogServiceImpl::PostMsg(
             request->peer_id(), request->to_id());
 
     const paxos::Message& msg = *request;
-    recv_msg_queue_.Push(
-            std::unique_ptr<paxos::Message>{new paxos::Message{msg}});
+    recv_msg_queue_.Push(make_unique<paxos::Message>(msg));
     return grpc::Status::OK;
 }
 
-//grpc::Status
-//GlogServiceImpl::Propose(
-//        grpc::ServerContext* context, 
-//        const glog::ProposeRequest* request, glog::ProposeResponse* reply)
-//{
-//    assert(nullptr != context);
-//    assert(nullptr != request);
-//    assert(nullptr != reply);
-//
-//    {
-//        string peer = context->peer();
-//        logdebug("Propose datasize %" PRIu64 " peer %s", 
-//                request->data().size(), peer.c_str());
-//    }
-//
-//    ProposeValue value = ConvertInto(*request);
-//    string proposing_data = ConvertInto(value);
-//
-//    int ret = 0;
-//    uint64_t index = 0;
-//    {
-//        // glog::CallBack<MemStorage> callback(storage_, msg_queue_);
-//        tie(ret, index) = paxos_log_.Propose(0, 
-//                {proposing_data.data(), proposing_data.size()}, true);
-//    }
-//    reply->set_retcode(ret);
-//    if (0 != ret) {
-//        logerr("Propose ret %d", ret);
-//        return grpc::Status(
-//                static_cast<grpc::StatusCode>(ret), "Propose failed");
-//    }
-//
-//    hassert(0 < index, "index %" PRIu64 "\n", index); 
-//    paxos_log_.Wait(index);
-//
-//    {
-//        // ADD FOR TEST
-//        assert(index <= paxos_log_.GetCommitedIndex()); 
-//    }
-//
-//    // check data by read from storage
-//    auto hs = readcb_(index);
-//    assert(nullptr != hs);
-//    const string& chosen_data = hs->accepted_value();
-//    assert(false == chosen_data.empty());
-//    logdebug("PROP: seq %" PRIu64 " timestaemp %" PRIu64, 
-//            value.seq(), value.timestamp());
-//    logdebug("SIZE: proposing_data %" PRIu64 " chosen_data %" PRIu64, 
-//            proposing_data.size(), chosen_data.size());
-//    if (proposing_data.size() == chosen_data.size()) {
-//        ProposeValue chosen_value = PickleFrom(chosen_data); 
-//        logdebug("CHOSEN: seq %" PRIu64 " timestamp %" PRIu64, 
-//                chosen_value.seq(), chosen_value.timestamp());
-//        if (chosen_value.seq() == value.seq() &&
-//                chosen_value.timestamp() == value.timestamp()) {
-//            assert(chosen_value.data() == value.data());
-//            // only case
-//            return grpc::Status::OK;
-//        }
-//    }
-//
-//    // else: propose preempted
-//    return grpc::Status(
-//            static_cast<grpc::StatusCode>(1), "Propose preempted");
-//}
-//
 //grpc::Status
 //GlogServiceImpl::GetPaxosInfo(
 //        grpc::ServerContext* context, 
@@ -465,7 +406,7 @@ GlogServiceImpl::Get(
     ASSERT_INPUT_PARAMS;
 
     if (0 == request->index()) {
-        reply->set_ret(-1);
+        reply->set_ret(ErrorCode::INVALID_PARAMS);
         logerr("invalid index 0");
         return grpc::Status::OK;
     }
@@ -475,35 +416,41 @@ GlogServiceImpl::Get(
     if (nullptr == paxos_log) {
         logerr("svr don't have paxos_log %" PRIu64 " yet", 
                 request->logid());
-        reply->set_ret(-10010);
+        reply->set_ret(ErrorCode::LOGID_DONT_EXIST);
         return grpc::Status::OK;
     }
 
     assert(nullptr != paxos_log);
-    int ret = 0;
+    paxos::ErrorCode ret = paxos::ErrorCode::OK;
     uint64_t commited_index = 0;
     std::unique_ptr<paxos::HardState> hs;
     tie(ret, commited_index, hs) = paxos_log->Get(request->index());
-    reply->set_ret(ret);
-    if (0 <= ret) {
+    if (paxos::ErrorCode::OK == ret ||
+            paxos::ErrorCode::UNCOMMITED_INDEX == ret) {
         reply->set_commited_index(commited_index);
-        if (0 == ret) {
+        if (paxos::ErrorCode::OK == ret) {
             assert(nullptr != hs);
             assert(commited_index >= hs->index());
 
-            auto commited_data = Pickle(hs->accepted_value());
+            auto commited_data = 
+                Pickle<glog::ProposeValue>(hs->accepted_value());
             if (nullptr == commited_data) {
-                reply->set_ret(-10010);
+                reply->set_ret(ErrorCode::PROTOBUF_PICKLE_ERROR);
                 logerr("Pickle index %" PRIu64 " failed", request->index());
                 return grpc::Status::OK;
             }
 
             reply->set_data(commited_data->data());
+            reply->set_ret(ErrorCode::OK);
+        }
+        else {
+            reply->set_ret(ErrorCode::UNCOMMITED_INDEX);
         }
     }
     else {
         logerr("paxos_log_.Get logid %" PRIu64 " index %" PRIu64 " ret %d", 
                 request->logid(), request->index(), ret);
+        reply->set_ret(ErrorCode::PAXOS_LOG_GET_ERROR);
     }
 
     return grpc::Status::OK;
@@ -522,20 +469,20 @@ GlogServiceImpl::Set(
     if (nullptr == paxos_log) {
         logerr("svr don't have paxos_log %" PRIu64 " yet", 
                 request->logid());
-        reply->set_ret(-10010);
+        reply->set_ret(ErrorCode::LOGID_DONT_EXIST);
         return grpc::Status::OK;
     }
 
     assert(nullptr != paxos_log);
-    auto value = Convert(request->data());
+    auto value = CreateANewProposeValue(request->data());
     auto proposing_data = Dump(value);
     if (nullptr == proposing_data) {
-        reply->set_ret(-1);
+        reply->set_ret(ErrorCode::PROTOBUF_DUMP_ERROR);
         return grpc::Status::OK;
     }
 
     assert(nullptr != proposing_data);
-    int ret = 0;
+    paxos::ErrorCode ret = paxos::ErrorCode::OK;
     uint64_t index = 0;
     {
         // glog::CallBack<MemStorage> callback(storage_, msg_queue_);
@@ -544,9 +491,9 @@ GlogServiceImpl::Set(
                 {proposing_data->data(), proposing_data->size()});
     }
 
-    reply->set_ret(ret);
-    if (0 != ret) {
+    if (paxos::ErrorCode::OK != ret) {
         logerr("Propose ret %d", ret);
+        reply->set_ret(ErrorCode::PAXOS_LOG_TRY_SET_ERROR);
         return grpc::Status::OK;
     }
 
@@ -575,12 +522,13 @@ GlogServiceImpl::Set(
         if (chosen_value.seq() == value.seq() &&
                 chosen_value.timestamp() == value.timestamp()) {
             assert(chosen_value.data() == value.data());
-            // only case
+
+            reply->set_ret(ErrorCode::OK);
             return grpc::Status::OK;
         }
     }
 
-    reply->set_ret(-1000); // TODO: fix retcode
+    reply->set_ret(ErrorCode::PAXOS_LOG_PREEMPTED);
     return grpc::Status::OK;
 }
 
@@ -593,7 +541,7 @@ GlogServiceImpl::CreateANewLog(
     ASSERT_INPUT_PARAMS;
 
     if (true == request->logname().empty()) {
-        reply->set_ret(-1);
+        reply->set_ret(glog::ErrorCode::INVALID_PARAMS);
         logerr("client request logname empty");
         return grpc::Status::OK;
     }
@@ -606,7 +554,7 @@ GlogServiceImpl::CreateANewLog(
     if (nullptr == self_request) {
         logdebug("log %s already exist logid %" PRIu64, 
                 request->logname().c_str(), new_logid);
-        reply->set_ret(1);
+        reply->set_ret(glog::ErrorCode::ALREADY_EXIST);
         reply->set_logid(new_logid);
         return grpc::Status::OK;
     }
@@ -621,13 +569,13 @@ GlogServiceImpl::CreateANewLog(
         return status;
     }
 
-    if (0 != self_reply.ret()) {
+    if (ErrorCode::OK != self_reply.ret()) {
         reply->set_ret(self_reply.ret());
         logerr("Set metainfo reply ret %d", self_reply.ret());
         return grpc::Status::OK;
     }
 
-    reply->set_ret(0);
+    reply->set_ret(glog::ErrorCode::OK);
     reply->set_logid(new_logid);
     logdebug("success set metainfo logname %s logid %" PRIu64, 
             request->logname().c_str(), new_logid);
@@ -643,7 +591,7 @@ GlogServiceImpl::QueryLogId(
     ASSERT_INPUT_PARAMS;
 
     if (true == request->logname().empty()) {
-        reply->set_ret(-1);
+        reply->set_ret(glog::ErrorCode::INVALID_PARAMS);
         logerr("client request logname empty");
         return grpc::Status::OK;
     }
@@ -653,19 +601,30 @@ GlogServiceImpl::QueryLogId(
     uint64_t logid = metainfo_->QueryLogId(request->logname());
     if (0 == logid) {
         logerr("logname %s don't exist yet", request->logname().c_str());
-        reply->set_ret(1);
+        reply->set_ret(glog::ErrorCode::LOGNAME_DONT_EXIST);
         return grpc::Status::OK;
     }
 
     logdebug("INFO: logname %s logid %" PRIu64, 
             request->logname().c_str(), logid);
-    reply->set_ret(0);
+    reply->set_ret(glog::ErrorCode::OK);
     reply->set_logid(logid);
     return grpc::Status::OK;
 }
 
-   
 glog::ProposeValue GlogServiceImpl::Convert(const std::string& orig_data)
+{
+    ProposeValue value;
+    value.set_seq(proposing_seq_.fetch_add(groups_.size()));
+    value.set_timestamp(static_cast<uint64_t>(
+                chrono::duration_cast<chrono::milliseconds>(
+                    chrono::system_clock::now().time_since_epoch()).count()));
+    value.set_data(orig_data);
+    return value;
+}
+
+glog::ProposeValue
+GlogServiceImpl::CreateANewProposeValue(const std::string& orig_data)
 {
     ProposeValue value;
     value.set_seq(proposing_seq_.fetch_add(groups_.size()));

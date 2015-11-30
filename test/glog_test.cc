@@ -121,7 +121,6 @@ int SimpleTestCreateAndQueryLog(
 
     GlogClientImpl client(svrid, 
             grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
-
     
     paxos::RandomStrGen<10, 100> str_gen;
     set<string> uniq_logname;
@@ -159,16 +158,18 @@ int SimpleTestCreateAndQueryLog(
 
 int SimpleSetAndGetTest(
         int times, 
-        uint64_t svrid, const std::map<uint64_t, std::string>& groups)
+        uint64_t svrid, const std::map<uint64_t, std::string>& groups, uint64_t logid)
 {
     assert(0 < times);
+    assert(0ull < logid);
+
     GlogClientImpl client(svrid, 
             grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
 
     int ret = 0;
     uint64_t commited_index = 0;
     string commited_value;
-    tie(ret, commited_index, commited_value) = client.Get(1ull);
+    tie(ret, commited_index, commited_value) = client.Get(logid, 1ull);
     hassert(0 <= ret, "client.Get 1ull ret %d", ret);
 
     string test_data;
@@ -189,10 +190,10 @@ int SimpleSetAndGetTest(
 
         printf ( "commited_index %" PRIu64 " index %" PRIu64 " times %d\n", 
                 commited_index, index, times );
-        ret = client.Set(index, {test_data.data(), test_data.size()});
+        ret = client.Set(logid, index, {test_data.data(), test_data.size()});
         hassert(0 == ret, "client.Set index %" PRIu64 " ret %d", index, ret);
 
-        tie(ret, commited_index, commited_value) = client.Get(index);
+        tie(ret, commited_index, commited_value) = client.Get(logid, index);
         hassert(0 == ret, "client.Get index %" PRIu64 " ret %d", index, ret);
 
         hassert(index == commited_index, 
@@ -214,9 +215,9 @@ main ( int argc, char *argv[] )
     vector<future<void>> vec;
     for (auto piter : groups) {
         cout << piter.first << ":" << piter.second << endl;
-        auto res = async(launch::async, 
-                StartServer, piter.first, cref(groups));
-        vec.push_back(move(res));
+        vec.emplace_back(async(launch::async, 
+                StartServer, piter.first, cref(groups)));
+        break;
     }
 
     // test
@@ -236,15 +237,17 @@ main ( int argc, char *argv[] )
 //    SimpleTryCatchUp(1ull, groups);
 //    SimpleTryPropose(1ull, groups, 10ull);
 
-    int test_times = 100;
-    auto t = paxos::measure::execution(SimpleTestCreateAndQueryLog, test_times, 1ull, groups);
-    cout << "SimpleTestCreateAndQueryLog " << test_times << " times ret " << std::get<0>(t)
-         << " cost time " << std::get<1>(t).count() << " ms" << endl;
+//    int test_times = 100;
+//    auto t = paxos::measure::execution(SimpleTestCreateAndQueryLog, test_times, 1ull, groups);
+//    cout << "SimpleTestCreateAndQueryLog " << test_times << " times ret " << std::get<0>(t)
+//         << " cost time " << std::get<1>(t).count() << " ms" << endl;
+
+
 //    auto t = paxos::measure::execution(SimpleSetAndGetTest, 100, 1ull, groups);
 //    cout << "SimpleSetAndGetTest " << 100 << " times ret " << std::get<0>(t)
 //         << " cost time " << std::get<1>(t).count() << " ms" << endl;
     for (auto& v : vec) {
-        v.get();
+        v.wait();
     }
 
     return EXIT_SUCCESS;

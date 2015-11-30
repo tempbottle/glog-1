@@ -54,7 +54,7 @@ class SendCallBack {
 
 public:
     SendCallBack(
-            CQueue<std::unique_ptr<paxos::Message>>& msg_queue)
+            CQueue<paxos::Message>& msg_queue)
         : msg_queue_(msg_queue)
     {
 
@@ -64,13 +64,12 @@ public:
     {
         assert(0 < rsp_msg.index());
         logdebug("TEST index %" PRIu64 " send msg", rsp_msg.index());
-        msg_queue_.Push(
-                std::unique_ptr<paxos::Message>{new paxos::Message{rsp_msg}});
+        msg_queue_.Push(std::make_unique<paxos::Message>(rsp_msg));
         return 0;
     }
 
 private:
-    CQueue<std::unique_ptr<paxos::Message>>& msg_queue_;
+    CQueue<paxos::Message>& msg_queue_;
 };
 
 //template <typename StorageType>

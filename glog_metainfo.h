@@ -27,7 +27,7 @@ using PaxosLogCreater =
 class GlogMetaInfo {
 
 public:
-    GlogMetaInfo(ReadCB readcb, PaxosLogCreater plog_creater);
+    GlogMetaInfo(ReadCBType readcb, PaxosLogCreater plog_creater);
 
     ~GlogMetaInfo();
 
@@ -46,7 +46,7 @@ public:
     int ApplyLogEntry(uint64_t apply_index);
 
 private:
-    ReadCB readcb_; 
+    ReadCBType readcb_; 
     PaxosLogCreater plog_creater_;
 
     std::unique_ptr<paxos::Paxos> meta_log_;

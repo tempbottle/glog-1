@@ -34,7 +34,7 @@ void AsyncApplyWorker(
         }
 
         // TODO: add wait timeout!
-        meta_log.Wait(commited_index + 1);
+        meta_log.WaitFor(commited_index + 1, chrono::milliseconds{1});
     }
 
     logerr("INFO %s exist", __func__);
@@ -44,7 +44,7 @@ void AsyncApplyWorker(
 }
 
 
-GlogMetaInfo::GlogMetaInfo(ReadCB readcb, PaxosLogCreater plog_creater)
+GlogMetaInfo::GlogMetaInfo(ReadCBType readcb, PaxosLogCreater plog_creater)
     : readcb_(readcb)
     , plog_creater_(plog_creater)
 {

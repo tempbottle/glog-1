@@ -6,6 +6,38 @@ package glog;
 
 import "paxos.proto";
 
+
+enum ErrorCode {
+
+    option allow_alias = true;
+
+    OK = 0;
+
+    ALREADY_EXIST = 1; 
+    UNCOMMITED_INDEX = 1;
+    LOGNAME_DONT_EXIST = 1;
+
+    // system
+    TIMEOUT = -1000;
+    GRPC_ERROR = -1100;
+
+    // protobuf
+    PROTOBUF_DUMP_ERROR = -1500;
+    PROTOBUF_PICKLE_ERROR = -1501;
+
+    // param
+    INVALID_PARAMS = -10000;
+    
+    // logic
+    LOGID_DONT_EXIST = -11000;    
+
+    PAXOS_LOG_TRY_SET_ERROR = -11100;
+    PAXOS_LOG_PREEMPTED = -11101;
+
+    PAXOS_LOG_GET_ERROR = -12000;
+
+};
+
 message ProposeValue {
     uint64 seq = 1;
     uint64 timestamp = 2;
@@ -22,7 +54,7 @@ message NoopMsg {
 };
 
 message RetCode {
-    int32 ret = 1;
+    ErrorCode ret = 1;
 };
 
 
@@ -59,7 +91,7 @@ message GetRequest {
 };
 
 message GetResponse {
-    int32 ret = 1;
+    ErrorCode ret = 1;
     uint64 commited_index = 2;
     bytes data = 3;
 };
@@ -77,7 +109,7 @@ message PaxosLogName {
 };
 
 message PaxosLogId {
-    int32 ret = 1;
+    ErrorCode ret = 1;
     uint64 logid = 2;
 };
 

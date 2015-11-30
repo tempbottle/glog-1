@@ -74,6 +74,12 @@ metainfo_test: metainfo_test.o ../glog_metainfo.o \
 	../glogpb/glog.pb.o
 	$(BUILDEXE)
 
+glog_service_test: glog_service_test.o ../glogpb/glog.pb.o ../glogpb/glog.grpc.pb.o \
+	../glog_server_impl.o ../glog_client_impl.o ../utils/config.o \
+	../glog_metainfo.o
+	$(BUILDEXE)
+
+
 %.o:%.cc
 	$(CPPCOMPILE)
 
