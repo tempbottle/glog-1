@@ -35,7 +35,9 @@ public:
 
     int Propose(gsl::cstring_view<> data);
 
-    std::tuple<int, uint64_t, uint64_t> GetPaxosInfo();
+    // retcode, max_index, commited_index
+    std::tuple<
+        glog::ErrorCode, uint64_t, uint64_t> GetPaxosInfo(uint64_t logid);
 
     void TryCatchUp();
 

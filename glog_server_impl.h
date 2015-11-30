@@ -41,21 +41,25 @@ public:
     ~GlogServiceImpl();
 
 
+    // begin of assistant function
     grpc::Status PostMsg(
             grpc::ServerContext* context, 
             const paxos::Message* request, 
             glog::NoopMsg* reply) override;
+    
+    grpc::Status TryCatchUp(
+            grpc::ServerContext* context, 
+            const glog::NoopMsg* request, 
+            glog::NoopMsg* reply) override;
+
+    grpc::Status GetPaxosInfo(
+            grpc::ServerContext* context, 
+            const glog::LogId* request, 
+            glog::PaxosInfoResponse* reply) override;
+
+    // end of assistant function
 
 //    // internal use
-//    grpc::Status GetPaxosInfo(
-//            grpc::ServerContext* context, 
-//            const glog::NoopMsg* request, 
-//            glog::PaxosInfo* reply) override;
-//
-//    grpc::Status TryCatchUp(
-//            grpc::ServerContext* context, 
-//            const glog::NoopMsg* request, 
-//            glog::NoopMsg* reply) override;
 //
 //    grpc::Status TryPropose(
 //            grpc::ServerContext* context, 
@@ -81,16 +85,17 @@ public:
 
     grpc::Status CreateANewLog(
             grpc::ServerContext* context, 
-            const glog::PaxosLogName* request, 
-            glog::PaxosLogId* response) override;
+            const glog::LogName* request, 
+            glog::LogIdResponse* response) override;
 
     grpc::Status QueryLogId(
             grpc::ServerContext* context, 
-            const glog::PaxosLogName* request, 
-            glog::PaxosLogId* response) override;
+            const glog::LogName* request, 
+            glog::LogIdResponse* response) override;
 
 public:
     // async worker
+    void StartAssistWorker();
 
 private:
     glog::ProposeValue ConvertInto(const glog::ProposeRequest& request);
@@ -119,6 +124,8 @@ private:
     // async worker
     std::unique_ptr<AsyncWorker> async_sendmsg_worker_;
     std::unique_ptr<AsyncWorker> async_recvmsg_worker_;
+
+    std::vector<std::unique_ptr<AsyncWorker>> vec_assit_worker_;
 }; 
 
 

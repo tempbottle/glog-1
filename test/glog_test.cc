@@ -217,7 +217,6 @@ main ( int argc, char *argv[] )
         cout << piter.first << ":" << piter.second << endl;
         vec.emplace_back(async(launch::async, 
                 StartServer, piter.first, cref(groups)));
-        break;
     }
 
     // test
@@ -237,10 +236,39 @@ main ( int argc, char *argv[] )
 //    SimpleTryCatchUp(1ull, groups);
 //    SimpleTryPropose(1ull, groups, 10ull);
 
-//    int test_times = 100;
-//    auto t = paxos::measure::execution(SimpleTestCreateAndQueryLog, test_times, 1ull, groups);
-//    cout << "SimpleTestCreateAndQueryLog " << test_times << " times ret " << std::get<0>(t)
-//         << " cost time " << std::get<1>(t).count() << " ms" << endl;
+    int test_times = 100;
+    {
+        auto t = paxos::measure::execution(SimpleTestCreateAndQueryLog, test_times, 1ull, groups);
+        printf ( "SimpleTestCreateAndQueryLog times %d ret %d cost time %d ms\n", 
+                test_times, std::get<0>(t), std::get<1>(t).count() );
+    }
+
+    printf ( "sleep\n" );
+    sleep(2);
+    {
+        // TEST
+        for (auto piter : groups) {
+            uint64_t svrid = piter.first;
+            
+            GlogClientImpl client(svrid, 
+                    grpc::CreateChannel(groups.at(svrid), grpc::InsecureCredentials()));
+
+            glog::ErrorCode ret = glog::ErrorCode::OK;
+            uint64_t commited_index = 0;
+            string commited_value;
+            tie(ret, commited_index, commited_value) = client.Get(1ull, 1ull);
+            printf ( "ret %d commited_index %d\n", ret, int(commited_index) );
+        }
+    }
+
+    sleep(2);
+    {
+        auto t = paxos::measure::execution(
+                SimpleSetAndGetTest, test_times, 1ull, groups, 1ull);
+        printf ( "SimpleSetAndGetTest times %d ret %d cost time %d ms\n", 
+                test_times, std::get<0>(t), std::get<1>(t).count() );
+    }
+
 
 
 //    auto t = paxos::measure::execution(SimpleSetAndGetTest, 100, 1ull, groups);

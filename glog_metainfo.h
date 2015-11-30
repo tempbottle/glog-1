@@ -1,6 +1,7 @@
 #pragma once
 
 #include <map>
+#include <set>
 #include <string>
 #include <functional>
 #include <mutex>
@@ -44,6 +45,8 @@ public:
     paxos::Paxos* GetPaxosLog(uint64_t logid);
 
     int ApplyLogEntry(uint64_t apply_index);
+
+    std::set<uint64_t> GetAllLogId();
 
 private:
     ReadCBType readcb_; 

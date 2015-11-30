@@ -69,7 +69,7 @@ GlogMetaInfo::~GlogMetaInfo() = default;
 
 paxos::Paxos* GlogMetaInfo::GetPaxosLog(uint64_t logid)
 {
-    if (0 == logid) {
+    if (METAINFO_LOGID == logid) {
         assert(nullptr != meta_log_);
         return meta_log_.get();
     }
@@ -176,6 +176,19 @@ uint64_t GlogMetaInfo::QueryLogId(const std::string& logname)
     assert(map_plog_.end() != map_plog_.find(logid));
     assert(nullptr != map_plog_[logid]);
     return logid;
+}
+
+std::set<uint64_t> GlogMetaInfo::GetAllLogId()
+{
+    set<uint64_t> logid_set;
+    lock_guard<mutex> lock(meta_log_mutex_);
+    for (const auto& piter : map_plog_) {
+        logid_set.insert(piter.first); 
+    }
+
+    assert(logid_set.end() == logid_set.find(METAINFO_LOGID));
+    logid_set.insert(METAINFO_LOGID);
+    return logid_set;
 }
 
 

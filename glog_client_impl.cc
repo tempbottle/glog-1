@@ -79,24 +79,33 @@ int GlogClientImpl::Propose(gsl::cstring_view<> data)
     return static_cast<int>(status.error_code());
 }
 
-std::tuple<int, uint64_t, uint64_t> GlogClientImpl::GetPaxosInfo()
+std::tuple<glog::ErrorCode, uint64_t, uint64_t> 
+GlogClientImpl::GetPaxosInfo(uint64_t logid)
 {
-    NoopMsg request;
-    PaxosInfo reply;
+    LogId request;
+    request.set_logid(logid);
+
+    PaxosInfoResponse reply;
 
     ClientContext context;
     set_deadline(context, DEFAULT_TIMEOUT);
 
     Status status = stub_->GetPaxosInfo(&context, request, &reply);
-    if (status.ok()) {
-        return std::make_tuple(0, reply.max_index(), reply.commited_index());
+    if (!status.ok()) {
+        auto error_message = status.error_message();
+        logerr("Propose failed error_code %d error_message %s", 
+                static_cast<int>(status.error_code()), error_message.c_str());
+        return make_tuple(ErrorCode::GRPC_ERROR, 0ull, 0ull);
     }
 
-    auto error_message = status.error_message();
-    logerr("Propose failed error_code %d error_message %s", 
-            static_cast<int>(status.error_code()), error_message.c_str());
-    assert(0 != static_cast<int>(status.error_code()));
-    return std::make_tuple(static_cast<int>(status.error_code()), 0ull, 0ull);
+    assert(true == status.ok());
+    assert(ErrorCode::OK == reply.ret() || 
+            ErrorCode::LOGID_DONT_EXIST == reply.ret());
+    if (ErrorCode::LOGID_DONT_EXIST == reply.ret()) {
+        return make_tuple(reply.ret(), 0ull, 0ull);
+    }
+
+    return make_tuple(reply.ret(), reply.max_index(), reply.commited_index());
 }
 
 void GlogClientImpl::TryCatchUp()
@@ -176,7 +185,7 @@ GlogClientImpl::Set(uint64_t logid, uint64_t index, gsl::cstring_view<> data)
     Status status = stub_->Set(&context, request, &reply);
     if (!status.ok()) {
         auto error_message = status.error_message();
-        logerr("logid %" PRIu64 " index " PRIu64 
+        logerr("logid %" PRIu64 " index %" PRIu64 
                 " failed error_code %d error_message %s", logid, index, 
                 static_cast<int>(status.error_code()), error_message.c_str());
         return ErrorCode::GRPC_ERROR;
@@ -217,7 +226,7 @@ GlogClientImpl::Get(uint64_t logid, uint64_t index)
         return std::make_tuple(ErrorCode::GRPC_ERROR, 0ull, "");
     }
 
-    if (ErrorCode::OK != reply.ret() || 
+    if (ErrorCode::OK != reply.ret() &&
             ErrorCode::UNCOMMITED_INDEX != reply.ret()) {
         logerr("logid %" PRIu64 " failed index %" PRIu64 " ret %d", 
                 logid, index, reply.ret());
@@ -225,8 +234,8 @@ GlogClientImpl::Get(uint64_t logid, uint64_t index)
     }
 
     logdebug("logid %" PRIu64 " index %" PRIu64 " Get success", logid, index);
-    return std::make_tuple(reply.ret(), 
-            reply.commited_index(), 0 != reply.ret() ? "" : reply.data());
+    return std::make_tuple(reply.ret(), reply.commited_index(), 
+            ErrorCode::OK != reply.ret() ? "" : reply.data());
 }
 
 std::tuple<glog::ErrorCode, uint64_t>
@@ -237,10 +246,10 @@ GlogClientImpl::CreateANewLog(const std::string& logname)
     }
 
     assert(false == logname.empty());
-    PaxosLogName request;
+    LogName request;
     request.set_logname(logname);
 
-    PaxosLogId reply;
+    LogIdResponse reply;
     ClientContext context;
     set_deadline(context, DEFAULT_TIMEOUT);
 
@@ -252,7 +261,7 @@ GlogClientImpl::CreateANewLog(const std::string& logname)
         return std::make_tuple(ErrorCode::GRPC_ERROR, 0ull);
     }
 
-    if (ErrorCode::OK != reply.ret() || 
+    if (ErrorCode::OK != reply.ret() &&
             ErrorCode::UNCOMMITED_INDEX != reply.ret()) {
         logerr("failed index %" PRIu64 " ret %d", index, reply.ret());
         return std::make_tuple(reply.ret(), 0ull);
@@ -271,10 +280,10 @@ GlogClientImpl::QueryLogId(const std::string& logname)
     }
 
     assert(false == logname.empty());
-    PaxosLogName request;
+    LogName request;
     request.set_logname(logname);
 
-    PaxosLogId reply;
+    LogIdResponse reply;
     ClientContext context;
     set_deadline(context, DEFAULT_TIMEOUT);
 
@@ -286,7 +295,7 @@ GlogClientImpl::QueryLogId(const std::string& logname)
         return std::make_tuple(ErrorCode::GRPC_ERROR, 0ull);
     }
 
-    if (ErrorCode::OK != reply.ret() || 
+    if (ErrorCode::OK != reply.ret() &&
             ErrorCode::LOGNAME_DONT_EXIST) {
         logerr("failed index %" PRIu64 " ret %d", index, reply.ret());
         return std::make_tuple(reply.ret(), 0ull);

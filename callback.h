@@ -63,7 +63,8 @@ public:
     int operator()(const paxos::Message& rsp_msg)
     {
         assert(0 < rsp_msg.index());
-        logdebug("TEST index %" PRIu64 " send msg", rsp_msg.index());
+        logdebug("TESTINFO logid %" PRIu64 " index %" PRIu64 " send msg", 
+                rsp_msg.logid(), rsp_msg.index());
         msg_queue_.Push(std::make_unique<paxos::Message>(rsp_msg));
         return 0;
     }

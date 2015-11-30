@@ -1,3 +1,4 @@
+#include <unistd.h>
 #include <map>
 #include <vector>
 #include <future>
@@ -26,9 +27,12 @@ namespace {
 
 using namespace glog;
 
+const int CATCHUP_INTERVAL = 5; // 5s
+
 
 std::tuple<bool, uint64_t, uint64_t>
     FindMostUpdatePeer(
+            uint64_t logid, 
             uint64_t selfid, 
             uint64_t self_commited_index, 
             const std::map<uint64_t, std::string>& groups)
@@ -43,11 +47,11 @@ std::tuple<bool, uint64_t, uint64_t>
 
         GlogClientImpl client(piter.first, grpc::CreateChannel(
                     piter.second, grpc::InsecureCredentials()));
-        int retcode = 0;
+        glog::ErrorCode retcode = glog::ErrorCode::OK;
         uint64_t max_index = 0;
         uint64_t commited_index = 0;
-        tie(retcode, max_index, commited_index) = client.GetPaxosInfo();
-        if (0 == retcode) {
+        tie(retcode, max_index, commited_index) = client.GetPaxosInfo(logid);
+        if (glog::ErrorCode::OK == retcode) {
             if (commited_index > peer_commited_index) {
                 peer_id = piter.first;
                 peer_commited_index = commited_index;
@@ -59,31 +63,20 @@ std::tuple<bool, uint64_t, uint64_t>
             peer_commited_index <= self_commited_index, peer_id, peer_commited_index);
 }
 
-//std::unique_ptr<std::string> Dump(const glog::ProposeValue& value)
+//std::unique_ptr<glog::ProposeValue> Pickle(const std::string& data)
 //{
-//    stringstream ss;
-//    bool ret = value.SerializeToOstream(&ss);
-//    if (false == ret) {
-//        return nullptr;
+//    ProposeValue value;
+//    {
+//        stringstream ss;
+//        ss.str(data);
+//        bool ret = value.ParseFromIstream(&ss);
+//        if (false == ret) {
+//            return nullptr;
+//        }
 //    }
-//
-//    return unique_ptr<string>(new string(ss.str()));
+//    
+//    return std::unique_ptr<glog::ProposeValue>{new glog::ProposeValue{value}};
 //}
-
-std::unique_ptr<glog::ProposeValue> Pickle(const std::string& data)
-{
-    ProposeValue value;
-    {
-        stringstream ss;
-        ss.str(data);
-        bool ret = value.ParseFromIstream(&ss);
-        if (false == ret) {
-            return nullptr;
-        }
-    }
-    
-    return std::unique_ptr<glog::ProposeValue>{new glog::ProposeValue{value}};
-}
 
 
 
@@ -125,6 +118,7 @@ void SendPostMsgWorker(
         MessageQueue& send_msg_queue, 
         std::atomic<bool>& stop)
 {
+    logdebug("%s thread start", __func__);
     std::map<uint64_t, std::unique_ptr<glog::GlogClientImpl>> client_cache;
 
     // TODO: 
@@ -141,8 +135,8 @@ void SendPostMsgWorker(
         assert(selfid == msg->peer_id());
         assert(0 < msg->index());
 
-        logdebug("TEST index %" PRIu64 " msgtype %d to_id %" PRIu64 " peer_id %" PRIu64 " ", 
-                msg->index(), static_cast<int>(msg->type()),
+        logdebug("TEST logid %" PRIu64 " index %" PRIu64 " msgtype %d to_id %" PRIu64 " peer_id %" PRIu64 " ", 
+                msg->logid(), msg->index(), static_cast<int>(msg->type()),
                 msg->to_id(), msg->peer_id());
 
         if (0 != msg->to_id()) {
@@ -170,6 +164,8 @@ void RecvPostMsgWorker(
         std::atomic<bool>& stop)
 {
     assert(nullptr != metainfo);
+    logdebug("%s thread start", __func__);
+
     // TODO: fix while loop: stop
     while (false == stop) {
         auto recv_msg = recv_msg_queue.Pop(chrono::microseconds{100});
@@ -203,6 +199,34 @@ void RecvPostMsgWorker(
     }
 
     logdebug("%s thread exist", __func__);
+    return ; 
+}
+
+
+void TryCatchUpWorker(GlogServiceImpl* service, std::atomic<bool>& stop)
+{
+    assert(nullptr != service);
+    logdebug("%s thread start", __func__);
+
+    while (false == stop) {
+        grpc::ServerContext self_context;
+        glog::NoopMsg self_request;
+        glog::NoopMsg self_reply;
+
+        auto status = 
+            service->TryCatchUp(&self_context, &self_request, &self_reply);
+        if (!status.ok()) {
+            auto error_message = status.error_message();
+            logerr("%s failed error_code %d error_message %s", 
+                    __func__, static_cast<int>(status.error_code()), 
+                    error_message.c_str());
+        }
+
+        sleep(CATCHUP_INTERVAL);
+    }
+
+    logdebug("%s thread exist", __func__);
+    return ;
 }
 
 
@@ -269,78 +293,89 @@ GlogServiceImpl::PostMsg(
     return grpc::Status::OK;
 }
 
-//grpc::Status
-//GlogServiceImpl::GetPaxosInfo(
-//        grpc::ServerContext* context, 
-//        const glog::NoopMsg* request, 
-//        glog::PaxosInfo* reply)
-//{
-//    assert(nullptr != context);
-//    assert(nullptr != request);
-//    assert(nullptr != reply);
-//
-//    {
-//        string peer = context->peer();
-//        logdebug("peer %s", peer.c_str());
-//    }
-//
-//    uint64_t selfid = 0;
-//    uint64_t max_index = 0;
-//    uint64_t commited_index = 0;
-//    tie(selfid, max_index, commited_index) = paxos_log_.GetPaxosInfo();
-//    reply->set_max_index(max_index);
-//    reply->set_commited_index(commited_index);
-//    return grpc::Status::OK;
-//}
-//
-//grpc::Status
-//GlogServiceImpl::TryCatchUp(
-//        grpc::ServerContext* context, 
-//        const glog::NoopMsg* request, 
-//        glog::NoopMsg* reply)
-//{
-//    assert(nullptr != context);
-//    assert(nullptr != request);
-//    assert(nullptr != reply);
-//
-//    {
-//        string peer = context->peer();
-//        logdebug("peer %s", peer.c_str());
-//    }
-//
-//    uint64_t selfid = 0;
-//    uint64_t max_index = 0;
-//    uint64_t commited_index = 0;
-//    tie(selfid, max_index, commited_index) = paxos_log_.GetPaxosInfo();
-//    
-//    bool most_recent = false;
-//    uint64_t peer_id = 0;
-//    uint64_t peer_commited_index = 0;
-//    tie(most_recent, peer_id, peer_commited_index) = 
-//        FindMostUpdatePeer(selfid, commited_index, groups_);
-//
-//    if (false == most_recent) {
-//        GlogClientImpl client(peer_id, grpc::CreateChannel(
-//                    groups_.at(peer_id), grpc::InsecureCredentials()));
-//        for (uint64_t catchup_index = commited_index + 1; 
-//                catchup_index <= peer_commited_index; ++catchup_index) {
-//            
-//            paxos::Message msg;
-//            msg.set_type(paxos::MessageType::CATCHUP);
-//            msg.set_peer_id(selfid);
-//            msg.set_to_id(peer_id);
-//            msg.set_index(catchup_index);
-//
-//            client.PostMsg(msg);
-//        }
-//    }
-//
-//    logdebug("most_recent %d seldid %" PRIu64 
-//            " commited_index %" PRIu64 " peer_commited_index %" PRIu64, 
-//            most_recent, selfid, commited_index, peer_commited_index);
-//    return grpc::Status::OK;
-//}
-//
+grpc::Status
+GlogServiceImpl::GetPaxosInfo(
+        grpc::ServerContext* context, 
+        const glog::LogId* request, 
+        glog::PaxosInfoResponse* reply)
+{
+    ASSERT_INPUT_PARAMS;
+
+    {
+        string peer = context->peer();
+        logdebug("peer %s", peer.c_str());
+    }
+
+    auto paxos_log = metainfo_->GetPaxosLog(request->logid());
+    if (nullptr == paxos_log) {
+        logerr("svr don't have paxos_log %" PRIu64 " yet", request->logid());
+        reply->set_ret(ErrorCode::LOGID_DONT_EXIST);
+        return grpc::Status::OK;
+    }
+
+    assert(nullptr != paxos_log);
+    uint64_t selfid = 0;
+    uint64_t max_index = 0;
+    uint64_t commited_index = 0;
+    tie(selfid, max_index, commited_index) = paxos_log->GetPaxosInfo();
+    reply->set_ret(ErrorCode::OK);
+    reply->set_max_index(max_index);
+    reply->set_commited_index(commited_index);
+    logdebug("%s logid %" PRIu64 " selfid %" PRIu64 
+            " max_index %" PRIu64 " commited_index %" PRIu64, 
+            request->logid(), selfid, max_index, commited_index);
+    return grpc::Status::OK;
+}
+
+
+grpc::Status
+GlogServiceImpl::TryCatchUp(
+        grpc::ServerContext* context, 
+        const glog::NoopMsg* request, 
+        glog::NoopMsg* reply)
+{
+    ASSERT_INPUT_PARAMS;
+
+    auto logid_set = metainfo_->GetAllLogId();
+    for (auto logid : logid_set) {
+        auto paxos_log = metainfo_->GetPaxosLog(logid);
+        assert(nullptr != paxos_log);
+
+        uint64_t selfid = 0;
+        uint64_t max_index = 0;
+        uint64_t commited_index = 0;
+        tie(selfid, max_index, commited_index) = paxos_log->GetPaxosInfo();
+
+        bool most_recent = false;
+        uint64_t peer_id = 0;
+        uint64_t peer_commited_index = 0;
+        tie(most_recent, peer_id, peer_commited_index) = 
+            FindMostUpdatePeer(logid, selfid, commited_index, groups_);
+        if (false == most_recent) {
+            for (uint64_t catchup_index = commited_index + 1; 
+                    catchup_index <= peer_commited_index; ++catchup_index) {
+                auto catchup_msg = make_unique<paxos::Message>();
+                assert(nullptr != catchup_msg);
+
+                catchup_msg->set_type(paxos::MessageType::CATCHUP);
+                catchup_msg->set_peer_id(selfid);
+                catchup_msg->set_to_id(peer_id);
+                catchup_msg->set_logid(logid);
+                catchup_msg->set_index(catchup_index);
+                recv_msg_queue_.Push(move(catchup_msg));
+                assert(nullptr == catchup_msg);
+            }
+        }
+
+        logdebug("logid %" PRIu64 " most_recent %d seldid %" PRIu64 
+                " commited_index %" PRIu64 " peer_commited_index %" PRIu64, 
+                logid, most_recent, selfid, commited_index, peer_commited_index);
+    }
+
+    return grpc::Status::OK;
+}
+
+
 //grpc::Status
 //GlogServiceImpl::TryPropose(
 //        grpc::ServerContext* context, 
@@ -484,12 +519,9 @@ GlogServiceImpl::Set(
     assert(nullptr != proposing_data);
     paxos::ErrorCode ret = paxos::ErrorCode::OK;
     uint64_t index = 0;
-    {
-        // glog::CallBack<MemStorage> callback(storage_, msg_queue_);
-        tie(ret, index) = paxos_log->TrySet(
-                request->index(), 
-                {proposing_data->data(), proposing_data->size()});
-    }
+    tie(ret, index) = paxos_log->TrySet(
+            request->index(), 
+            {proposing_data->data(), proposing_data->size()});
 
     if (paxos::ErrorCode::OK != ret) {
         logerr("Propose ret %d", ret);
@@ -535,8 +567,8 @@ GlogServiceImpl::Set(
 grpc::Status
 GlogServiceImpl::CreateANewLog(
         grpc::ServerContext* context, 
-        const glog::PaxosLogName* request, 
-        glog::PaxosLogId* reply)
+        const glog::LogName* request, 
+        glog::LogIdResponse* reply)
 {
     ASSERT_INPUT_PARAMS;
 
@@ -585,8 +617,8 @@ GlogServiceImpl::CreateANewLog(
 grpc::Status
 GlogServiceImpl::QueryLogId(
         grpc::ServerContext* context, 
-        const glog::PaxosLogName* request, 
-        glog::PaxosLogId* reply)
+        const glog::LogName* request, 
+        glog::LogIdResponse* reply)
 {
     ASSERT_INPUT_PARAMS;
 
@@ -664,6 +696,16 @@ glog::ProposeValue GlogServiceImpl::PickleFrom(const std::string& data)
     return value;
 }
 
+
+void GlogServiceImpl::StartAssistWorker()
+{
+    if (false == vec_assit_worker_.empty()) {
+        return ;
+    }
+    
+    vec_assit_worker_.emplace_back(
+            make_unique<AsyncWorker>(TryCatchUpWorker, this));
+}
 
 } // namespace glog
 
