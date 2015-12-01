@@ -46,31 +46,23 @@ public:
             grpc::ServerContext* context, 
             const paxos::Message* request, 
             glog::NoopMsg* reply) override;
-    
+ 
+    grpc::Status GetPaxosInfo(
+            grpc::ServerContext* context, 
+            const glog::LogId* request, 
+            glog::PaxosInfoResponse* reply) override;
+   
     grpc::Status TryCatchUp(
             grpc::ServerContext* context, 
             const glog::NoopMsg* request, 
             glog::NoopMsg* reply) override;
 
-    grpc::Status GetPaxosInfo(
+    grpc::Status CheckAndFixTimeoutPropose(
             grpc::ServerContext* context, 
-            const glog::LogId* request, 
-            glog::PaxosInfoResponse* reply) override;
+            const glog::NoopMsg* request, 
+            glog::NoopMsg* reply) override;
 
     // end of assistant function
-
-//    // internal use
-//
-//    grpc::Status TryPropose(
-//            grpc::ServerContext* context, 
-//            const glog::TryProposeRequest* request, 
-//            glog::NoopMsg* reply) override;
-//
-//    // test
-//    grpc::Status GetGlog(
-//            grpc::ServerContext* context, 
-//            const glog::GetGlogRequest* request, 
-//            glog::GetGlogResponse* reply)    override;
 
     // read, write
     grpc::Status Get(
@@ -105,7 +97,8 @@ private:
 
     glog::ProposeValue Convert(const std::string& orig_data);
 
-    glog::ProposeValue CreateANewProposeValue(const std::string& orig_data);
+    glog::ProposeValue 
+        CreateANewProposeValue(const std::string& orig_data);
 
 
 private:

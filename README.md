@@ -1,4 +1,4 @@
 # glog
 
 
-deps: cpaxos, grpc, rapidjson
+deps: cpaxos, grpc, rapidjson, protobuf 3

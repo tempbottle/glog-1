@@ -25,6 +25,8 @@ class SetRequest;
 using PaxosLogCreater = 
     std::function<std::unique_ptr<paxos::Paxos>(uint64_t logid)>;
 
+extern uint64_t METAINFO_LOGID;
+
 class GlogMetaInfo {
 
 public:

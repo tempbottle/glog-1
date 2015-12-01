@@ -3,6 +3,8 @@
 #include <vector>
 #include <future>
 #include <sstream>
+#include <algorithm>
+#include <random>
 #include "glog_server_impl.h"
 #include "glog_client_impl.h"
 #include "paxos.h"
@@ -28,56 +30,60 @@ namespace {
 using namespace glog;
 
 const int CATCHUP_INTERVAL = 5; // 5s
+const int TIMEOUT_CHECK_INTERVAL = 500; // 500ms
+const int DEFAULT_PAXOS_INSTANCE_TIMEOUT = 50; // 50ms
 
 
-std::tuple<bool, uint64_t, uint64_t>
-    FindMostUpdatePeer(
+// logid, <max_index, commited_index>
+std::map<uint64_t, std::tuple<uint64_t, uint64_t>>
+    QueryLogPaxosInfo(
             uint64_t logid, 
             uint64_t selfid, 
-            uint64_t self_commited_index, 
             const std::map<uint64_t, std::string>& groups)
 {
-    uint64_t peer_id = 0;
-    uint64_t peer_commited_index = 0;
-    // rand-shuffle the groups ?
-    for (auto& piter : groups) {
-        if (piter.first == selfid) {
+    map<uint64_t, tuple<uint64_t, uint64_t>> all_paxosinfo;
+    for (const auto& id_addr_pair : groups) {
+        if (id_addr_pair.first == selfid) {
             continue;
         }
 
-        GlogClientImpl client(piter.first, grpc::CreateChannel(
-                    piter.second, grpc::InsecureCredentials()));
+        GlogClientImpl client(id_addr_pair.first, 
+                grpc::CreateChannel(
+                    id_addr_pair.second, grpc::InsecureCredentials()));
         glog::ErrorCode retcode = glog::ErrorCode::OK;
         uint64_t max_index = 0;
         uint64_t commited_index = 0;
         tie(retcode, max_index, commited_index) = client.GetPaxosInfo(logid);
         if (glog::ErrorCode::OK == retcode) {
-            if (commited_index > peer_commited_index) {
-                peer_id = piter.first;
-                peer_commited_index = commited_index;
-            }
+            all_paxosinfo[id_addr_pair.first] = 
+                make_tuple(max_index, commited_index);
         }
     }
 
-    return make_tuple(
-            peer_commited_index <= self_commited_index, peer_id, peer_commited_index);
+    return all_paxosinfo;
 }
 
-//std::unique_ptr<glog::ProposeValue> Pickle(const std::string& data)
-//{
-//    ProposeValue value;
-//    {
-//        stringstream ss;
-//        ss.str(data);
-//        bool ret = value.ParseFromIstream(&ss);
-//        if (false == ret) {
-//            return nullptr;
-//        }
-//    }
-//    
-//    return std::unique_ptr<glog::ProposeValue>{new glog::ProposeValue{value}};
-//}
 
+// most update: peer_id, peer_commited_index
+std::tuple<uint64_t, uint64_t>
+    FindMostUpdatePeer(
+            uint64_t logid, 
+            uint64_t selfid, 
+            const std::map<uint64_t, std::string>& groups)
+{
+    uint64_t peer_id = 0;
+    uint64_t peer_commited_index = 0;
+    // rand-shuffle the groups ?
+    auto all_paxosinfo = QueryLogPaxosInfo(logid, selfid, groups);
+    for (const auto& id_paxosinfo : all_paxosinfo) {
+        if (get<1>(id_paxosinfo.second) > peer_commited_index) {
+            peer_id = id_paxosinfo.first;
+            peer_commited_index = get<1>(id_paxosinfo.second);
+        }
+    }
+
+    return make_tuple(peer_id, peer_commited_index);
+}
 
 
 } // namespace
@@ -229,6 +235,35 @@ void TryCatchUpWorker(GlogServiceImpl* service, std::atomic<bool>& stop)
     return ;
 }
 
+void CheckAndFixTimeoutProposeWorker(
+        GlogServiceImpl* service, std::atomic<bool>& stop)
+{
+    assert(nullptr != service);
+    logdebug("%s thread start", __func__);
+
+    while (false == stop) {
+
+        grpc::ServerContext self_context;
+        glog::NoopMsg self_request;
+        glog::NoopMsg self_reply;
+
+        auto status = 
+            service->CheckAndFixTimeoutPropose(
+                    &self_context, &self_request, &self_reply);
+        if (!status.ok()) {
+            auto error_message = status.error_message();
+            logerr("%s failed error_code %d error_message %s", 
+                    __func__, static_cast<int>(status.error_code()), 
+                    error_message.c_str());
+        }
+
+        usleep(TIMEOUT_CHECK_INTERVAL * 1000); // ms
+    }
+
+    logdebug("%s thread exist", __func__);
+    return ;
+}
+
 
 } // namespace
 
@@ -323,7 +358,7 @@ GlogServiceImpl::GetPaxosInfo(
     reply->set_commited_index(commited_index);
     logdebug("%s logid %" PRIu64 " selfid %" PRIu64 
             " max_index %" PRIu64 " commited_index %" PRIu64, 
-            request->logid(), selfid, max_index, commited_index);
+            __func__, request->logid(), selfid, max_index, commited_index);
     return grpc::Status::OK;
 }
 
@@ -346,14 +381,13 @@ GlogServiceImpl::TryCatchUp(
         uint64_t commited_index = 0;
         tie(selfid, max_index, commited_index) = paxos_log->GetPaxosInfo();
 
-        bool most_recent = false;
         uint64_t peer_id = 0;
         uint64_t peer_commited_index = 0;
-        tie(most_recent, peer_id, peer_commited_index) = 
-            FindMostUpdatePeer(logid, selfid, commited_index, groups_);
-        if (false == most_recent) {
+        tie(peer_id, peer_commited_index) = FindMostUpdatePeer(logid, selfid, groups_);
+        if (peer_commited_index > commited_index) {
             for (uint64_t catchup_index = commited_index + 1; 
-                    catchup_index <= peer_commited_index; ++catchup_index) {
+                    catchup_index <= peer_commited_index; 
+                    ++catchup_index) {
                 auto catchup_msg = make_unique<paxos::Message>();
                 assert(nullptr != catchup_msg);
 
@@ -367,9 +401,67 @@ GlogServiceImpl::TryCatchUp(
             }
         }
 
-        logdebug("logid %" PRIu64 " most_recent %d seldid %" PRIu64 
-                " commited_index %" PRIu64 " peer_commited_index %" PRIu64, 
-                logid, most_recent, selfid, commited_index, peer_commited_index);
+        logdebug("selfid %" PRIu64 " logid %" PRIu64 
+                " commited_index %" PRIu64 
+                " peer_commited_index %" PRIu64, 
+                selfid, logid, 
+                commited_index, peer_commited_index);
+    }
+
+    return grpc::Status::OK;
+}
+
+grpc::Status
+GlogServiceImpl::CheckAndFixTimeoutPropose(
+        grpc::ServerContext* context, 
+        const glog::NoopMsg* request, 
+        glog::NoopMsg* reply)
+{
+    ASSERT_INPUT_PARAMS;
+
+    // 1. try to fix timeout propose only if can reach
+    // to the quo of cluster
+    uint64_t selfid = metainfo_->GetMetaInfoLog().GetSelfId();
+    auto all_paxosinfo = QueryLogPaxosInfo(METAINFO_LOGID, selfid, groups_);
+    if (all_paxosinfo.size() + 1 <= (groups_.size() / 2)) {
+        logerr("%s selfid %" PRIu64 " can't reach to quorum-size server", 
+                __func__, selfid);
+        return grpc::Status::OK;
+    }
+
+    // 2. local check timeout
+    // 2.1 random shuffle the logid
+    auto logid_set = metainfo_->GetAllLogId();
+    vector<uint64_t> logid_vec(logid_set.begin(), logid_set.end());
+    {
+        random_device rd;
+        mt19937 g(rd());
+        shuffle(logid_vec.begin(), logid_vec.end(), g);
+    }
+
+    for (auto logid : logid_vec) {
+        auto paxos_log = metainfo_->GetPaxosLog(logid);
+        assert(nullptr != paxos_log);
+
+        auto timeout_idxes = 
+            paxos_log->GetAllTimeoutIndex(
+                    std::chrono::milliseconds{DEFAULT_PAXOS_INSTANCE_TIMEOUT});
+        for (auto index : timeout_idxes) {
+
+            auto reprop_msg = make_unique<paxos::Message>();
+            assert(nullptr != reprop_msg);
+
+            reprop_msg->set_type(paxos::MessageType::TRY_PROP);
+            reprop_msg->set_to_id(selfid);
+            reprop_msg->set_logid(logid);
+            reprop_msg->set_index(index);
+            recv_msg_queue_.Push(move(reprop_msg));
+            assert(nullptr == reprop_msg);
+        }
+
+        logdebug("selfid %" PRIu64 " all_paxosinfo.size %" PRIu64 
+                " logid %" PRIu64 " timeout_idxes.size %" PRIu64, 
+                selfid, all_paxosinfo.size(), logid, timeout_idxes.size());
     }
 
     return grpc::Status::OK;
@@ -705,6 +797,8 @@ void GlogServiceImpl::StartAssistWorker()
     
     vec_assit_worker_.emplace_back(
             make_unique<AsyncWorker>(TryCatchUpWorker, this));
+    vec_assit_worker_.emplace_back(
+            make_unique<AsyncWorker>(CheckAndFixTimeoutProposeWorker, this));
 }
 
 } // namespace glog

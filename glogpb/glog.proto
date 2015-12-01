@@ -123,21 +123,17 @@ message LogIdResponse {
 
 service Glog {
 
+    // internal use
     rpc PostMsg (paxos.Message) returns (NoopMsg) {}
 
-    // internal use
     rpc GetPaxosInfo (LogId) returns (PaxosInfoResponse) {}
-
-    rpc Propose (ProposeRequest) returns (ProposeResponse) {}
-
 
     rpc TryCatchUp (NoopMsg) returns (NoopMsg) {}
 
-    rpc TryPropose (TryProposeRequest) returns (NoopMsg) {}
+    rpc CheckAndFixTimeoutPropose (NoopMsg) returns (NoopMsg) {}
+    // end of internal use
 
-    // ADD FOR TEST
-    rpc GetGlog (GetGlogRequest) returns (GetGlogResponse) {}
-
+    // public service
     rpc Get (GetRequest) returns (GetResponse) {}
 
     rpc Set (SetRequest) returns (RetCode) {}
@@ -145,7 +141,7 @@ service Glog {
     rpc CreateANewLog (LogName) returns (LogIdResponse) {}
 
     rpc QueryLogId (LogName) returns (LogIdResponse) {}
-
+    // end of public service
 }
 
 

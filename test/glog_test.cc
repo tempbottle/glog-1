@@ -58,6 +58,8 @@ void StartServer(uint64_t selfid, const std::map<uint64_t, std::string>& groups)
     logdebug("Server %" PRIu64 " listening on %s\n", 
             selfid, groups.at(selfid).c_str());
 
+    service.StartAssistWorker();
+
     server->Wait();
     return ;
 }
@@ -270,6 +272,7 @@ main ( int argc, char *argv[] )
     }
 
 
+    sleep(10);
 
 //    auto t = paxos::measure::execution(SimpleSetAndGetTest, 100, 1ull, groups);
 //    cout << "SimpleSetAndGetTest " << 100 << " times ret " << std::get<0>(t)

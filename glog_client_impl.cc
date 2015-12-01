@@ -58,27 +58,6 @@ void GlogClientImpl::PostMsg(const paxos::Message& msg)
     return ;
 }
 
-int GlogClientImpl::Propose(gsl::cstring_view<> data)
-{
-    ProposeRequest request;
-    request.set_data(data.data(), data.size());
-    
-    ProposeResponse reply;
-
-    ClientContext context;
-    set_deadline(context, DEFAULT_TIMEOUT);
-    Status status = stub_->Propose(&context, request, &reply);
-    printf ( "ret from Propose\n" );
-    if (status.ok()) {
-        return reply.retcode();
-    }
-
-    auto error_message = status.error_message();
-    logerr("Propose failed error_code %d error_message %s", 
-            static_cast<int>(status.error_code()), error_message.c_str());
-    return static_cast<int>(status.error_code());
-}
-
 std::tuple<glog::ErrorCode, uint64_t, uint64_t> 
 GlogClientImpl::GetPaxosInfo(uint64_t logid)
 {
@@ -125,49 +104,6 @@ void GlogClientImpl::TryCatchUp()
     logerr("Propose failed error_code %d error_message %s", 
             static_cast<int>(status.error_code()), error_message.c_str());
     return ;
-}
-
-void GlogClientImpl::TryPropose(uint64_t index)
-{
-    assert(0 < index);
-    TryProposeRequest request;
-    request.set_index(index);
-    NoopMsg reply;
-
-    ClientContext context;
-    set_deadline(context, DEFAULT_TIMEOUT);
-
-    Status status = stub_->TryPropose(&context, request, &reply);
-    if (status.ok()) {
-        return ;
-    }
-
-    auto error_message = status.error_message();
-    logerr("Propose failed error_code %d error_message %s", 
-            static_cast<int>(status.error_code()), error_message.c_str());
-    return ;
-}
-
-std::tuple<std::string, std::string> GlogClientImpl::GetGlog(uint64_t index)
-{
-    assert(0 < index);
-    GetGlogRequest request;
-    request.set_index(index);
-
-    GetGlogResponse reply;
-
-    ClientContext context; 
-    set_deadline(context, DEFAULT_TIMEOUT);
-
-    Status status = stub_->GetGlog(&context, request, &reply);
-    if (status.ok()) {
-        return std::make_tuple(reply.info(), reply.data());
-    }
-
-    auto error_message = status.error_message();
-    logerr("Propose failed error_code %d error_message %s", 
-            static_cast<int>(status.error_code()), error_message.c_str());
-    return std::make_tuple(move(error_message), "");
 }
 
 glog::ErrorCode 
@@ -222,7 +158,8 @@ GlogClientImpl::Get(uint64_t logid, uint64_t index)
         auto error_message = status.error_message();
         logerr("logid %" PRIu64 " index %" PRIu64
                 "failed error_code %d error_message %s", logid, index, 
-                static_cast<int>(status.error_code()), error_message.c_str());
+                static_cast<int>(status.error_code()), 
+                error_message.c_str());
         return std::make_tuple(ErrorCode::GRPC_ERROR, 0ull, "");
     }
 
@@ -233,8 +170,10 @@ GlogClientImpl::Get(uint64_t logid, uint64_t index)
         return std::make_tuple(reply.ret(), 0ull, "");
     }
 
-    logdebug("logid %" PRIu64 " index %" PRIu64 " Get success", logid, index);
-    return std::make_tuple(reply.ret(), reply.commited_index(), 
+    logdebug("logid %" PRIu64 
+            " index %" PRIu64 " Get success", logid, index);
+    return std::make_tuple(
+            reply.ret(), reply.commited_index(), 
             ErrorCode::OK != reply.ret() ? "" : reply.data());
 }
 
@@ -256,8 +195,10 @@ GlogClientImpl::CreateANewLog(const std::string& logname)
     auto status = stub_->CreateANewLog(&context, request, &reply);
     if (!status.ok()) {
         auto error_message = status.error_message();
-        logerr("%s failed error_code %d error_message %s", logname.c_str(), 
-                static_cast<int>(status.error_code()), error_message.c_str());
+        logerr("%s failed error_code %d error_message %s", 
+                logname.c_str(), 
+                static_cast<int>(status.error_code()), 
+                error_message.c_str());
         return std::make_tuple(ErrorCode::GRPC_ERROR, 0ull);
     }
 

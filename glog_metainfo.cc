@@ -9,9 +9,9 @@ using namespace std;
 
 namespace glog {
 
-namespace {
-
 uint64_t METAINFO_LOGID = 0;
+
+namespace {
 
 void AsyncApplyWorker(
         GlogMetaInfo* metainfo, uint64_t apply_index, 
